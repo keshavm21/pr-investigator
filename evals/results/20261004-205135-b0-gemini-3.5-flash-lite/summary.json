@@ -1,0 +1,44 @@
+{
+  "run": {
+    "reviewer": "b0",
+    "started_at": "2026-10-04T20:50:25+00:00",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "judge": "location-only",
+    "samples": 1,
+    "tolerance": 3,
+    "review_prompt": "baseline_review.v1",
+    "cases": [
+      "clean-extract-rows-helper",
+      "clean-health-endpoint",
+      "decoy-admin-router-auth",
+      "decoy-allowlisted-sort",
+      "seeded-broken-caller-signature",
+      "seeded-missing-authorization",
+      "seeded-none-dereference",
+      "seeded-off-by-one-pagination",
+      "seeded-path-traversal-attachments",
+      "seeded-sql-injection-search"
+    ],
+    "stopped_early": null
+  },
+  "summary": {
+    "runs": 10,
+    "failed_runs": 0,
+    "findings": 4,
+    "true_positives": 4,
+    "partial_matches": 0,
+    "false_positives": 0,
+    "expected_issues": 6,
+    "precision": 1.0,
+    "recall": 0.6666666666666666,
+    "f0_5": 0.9090909090909091,
+    "false_positives_per_clean_run": 0.0,
+    "decoy_trigger_rate": 0.0,
+    "anchor_in_diff_rate": 1.0,
+    "exact_location_rate": 1.0,
+    "input_tokens": 11066,
+    "output_tokens": 1122,
+    "cached_runs": 0
+  }
+}
