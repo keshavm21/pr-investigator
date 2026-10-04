@@ -1,0 +1,35 @@
+id: seeded-sql-injection-search
+kind: seeded
+title: Add item search endpoint
+description: |
+  The storefront needs a simple way to search the catalogue by name.
+  Adds GET /items/search?q=<term>, available to any logged-in user.
+edits:
+  - path: app/routes/items.py
+    find: |
+      @router.get("/{item_id}")
+    replace: |
+      @router.get("/search")
+      @require_login
+      def search_items(request: Request) -> Response:
+          term = request.query.get("q", "").strip()
+          if not term:
+              return Response.json([])
+          rows = db.query(
+              f"SELECT id, name, price FROM items WHERE name LIKE '%{term}%' ORDER BY name LIMIT 50"
+          )
+          return Response.json([dict(row) for row in rows])
+
+
+      @router.get("/{item_id}")
+expected:
+  - id: sqli
+    category: security
+    severity: high
+    location:
+      path: app/routes/items.py
+      match: "WHERE name LIKE '%{term}%'"
+    description: >
+      The user-controlled `q` parameter is interpolated into the SQL string with an f-string
+      instead of being passed as a bound parameter, so any logged-in user can inject SQL
+      (for example to read other tables).

@@ -1,0 +1,46 @@
+id: seeded-off-by-one-pagination
+kind: seeded
+title: Switch item listing to page-based pagination
+description: |
+  Clients asked for page/page_size instead of raw offsets.
+  Pages are 1-indexed: page=1 is the first page.
+edits:
+  - path: app/pagination.py
+    create: |
+      """Pagination helpers shared by list endpoints."""
+
+      from __future__ import annotations
+
+
+      def page_bounds(page: int, page_size: int) -> tuple[int, int]:
+          """Return (limit, offset) for the 1-indexed `page`."""
+          offset = page * page_size
+          return page_size, offset
+  - path: app/routes/items.py
+    find: |
+      def list_items(request: Request) -> Response:
+          limit = parse_positive_int(request.query.get("limit"), default=20, maximum=100)
+          offset = parse_offset(request.query.get("offset"))
+    replace: |
+      def list_items(request: Request) -> Response:
+          page = parse_positive_int(request.query.get("page"), default=1, maximum=10_000)
+          page_size = parse_positive_int(request.query.get("page_size"), default=20, maximum=100)
+          limit, offset = page_bounds(page, page_size)
+  - path: app/routes/items.py
+    find: |
+      from app.db import db
+      from app.validators import parse_offset, parse_positive_int
+    replace: |
+      from app.db import db
+      from app.pagination import page_bounds
+      from app.validators import parse_positive_int
+expected:
+  - id: off-by-one
+    category: correctness
+    severity: medium
+    location:
+      path: app/pagination.py
+      match: "offset = page * page_size"
+    description: >
+      Pages are documented as 1-indexed, so the offset must be (page - 1) * page_size. As
+      written, page=1 skips the first page_size items and the first page is never returned.

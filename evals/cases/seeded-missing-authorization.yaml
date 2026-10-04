@@ -1,0 +1,33 @@
+id: seeded-missing-authorization
+kind: seeded
+title: Add bulk price update endpoint
+description: |
+  Lets the pricing team apply a percentage change to every item at once,
+  for example factor=1.05 for a 5% increase.
+edits:
+  - path: app/routes/items.py
+    find: |
+      @router.delete("/{item_id}")
+    replace: |
+      @router.post("/bulk-price")
+      @require_login
+      def bulk_update_prices(request: Request) -> Response:
+          payload = request.json()
+          factor = Decimal(str(payload["factor"]))
+          if factor <= 0:
+              raise HTTPError(400, "factor must be positive")
+          changed = db.execute("UPDATE items SET price = ROUND(price * ?, 2)", (str(factor),))
+          return Response.json({"updated": changed})
+
+
+      @router.delete("/{item_id}")
+expected:
+  - id: authz
+    category: security
+    severity: high
+    location:
+      path: app/routes/items.py
+      match: "def bulk_update_prices"
+    description: >
+      The endpoint reprices every item but only requires login, while the other mutating item
+      endpoints require the staff or admin role. Any customer can change all prices.

@@ -1,3 +1,17 @@
 node_modules/
 .env
 .DS_Store
+# Python
+# Virtual environment. Inside iCloud-synced folders, .venv is a symlink to venv.nosync/
+# (see "macOS and iCloud" in CLAUDE.md), so ignore the name whether it's a file or a dir.
+.venv
+venv.nosync/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+
+# Local run data, workspaces and the LLM response cache
+.pri/

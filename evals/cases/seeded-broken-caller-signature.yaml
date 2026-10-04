@@ -1,0 +1,56 @@
+id: seeded-broken-caller-signature
+kind: seeded
+title: Support order discounts in pricing
+description: |
+  Adds a discount parameter to calculate_total for the upcoming promo codes feature.
+  Tests are updated.
+edits:
+  - path: app/pricing.py
+    find: |
+      def calculate_total(lines: list[OrderLine], tax_rate: Decimal) -> Decimal:
+          """Return the order total including tax, rounded to cents."""
+          subtotal = sum((line.unit_price * line.quantity for line in lines), Decimal("0"))
+          return (subtotal * (1 + tax_rate)).quantize(CENT)
+    replace: |
+      def calculate_total(lines: list[OrderLine], tax_rate: Decimal, discount: Decimal) -> Decimal:
+          """Return the order total including tax, rounded to cents.
+
+          `discount` is a fraction in [0, 1) taken off the subtotal before tax.
+          """
+          if not Decimal("0") <= discount < Decimal("1"):
+              raise ValueError("discount must be in [0, 1)")
+          subtotal = sum((line.unit_price * line.quantity for line in lines), Decimal("0"))
+          discounted = subtotal * (1 - discount)
+          return (discounted * (1 + tax_rate)).quantize(CENT)
+  - path: tests/test_pricing.py
+    find: |
+      def test_total_includes_tax() -> None:
+          lines = [OrderLine(item_id=1, quantity=2, unit_price=Decimal("10.00"))]
+          assert calculate_total(lines, Decimal("0.08")) == Decimal("21.60")
+
+
+      def test_empty_order_is_zero() -> None:
+          assert calculate_total([], Decimal("0.08")) == Decimal("0.00")
+    replace: |
+      def test_total_includes_tax() -> None:
+          lines = [OrderLine(item_id=1, quantity=2, unit_price=Decimal("10.00"))]
+          assert calculate_total(lines, Decimal("0.08"), Decimal("0")) == Decimal("21.60")
+
+
+      def test_discount_applies_before_tax() -> None:
+          lines = [OrderLine(item_id=1, quantity=2, unit_price=Decimal("10.00"))]
+          assert calculate_total(lines, Decimal("0.08"), Decimal("0.25")) == Decimal("16.20")
+
+
+      def test_empty_order_is_zero() -> None:
+          assert calculate_total([], Decimal("0.08"), Decimal("0")) == Decimal("0.00")
+expected:
+  - id: broken-caller
+    category: correctness
+    severity: high
+    location:
+      path: app/pricing.py
+      match: "def calculate_total(lines: list[OrderLine], tax_rate: Decimal, discount: Decimal)"
+    description: >
+      The new `discount` parameter is required, but app/routes/orders.py still calls
+      calculate_total(lines, TAX_RATE). Every order creation will raise TypeError.
