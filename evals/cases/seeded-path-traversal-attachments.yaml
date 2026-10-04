@@ -1,0 +1,50 @@
+id: seeded-path-traversal-attachments
+kind: seeded
+title: Serve item attachments
+description: |
+  Customers asked to download item manuals and spec sheets.
+  Adds GET /attachments/{filename}, served from the attachments volume.
+edits:
+  - path: app/routes/attachments.py
+    create: |
+      """Item attachment downloads (manuals, spec sheets)."""
+
+      from __future__ import annotations
+
+      import os
+
+      from app.auth import require_login
+      from app.web import HTTPError, Request, Response, Router
+
+      router = Router(prefix="/attachments")
+      ATTACHMENT_DIR = "/var/lib/inventory/attachments"
+
+
+      @router.get("/{filename}")
+      @require_login
+      def get_attachment(request: Request, filename: str) -> Response:
+          path = os.path.join(ATTACHMENT_DIR, filename)
+          if not os.path.isfile(path):
+              raise HTTPError(404, "attachment not found")
+          with open(path, "rb") as handle:
+              return Response.file(handle.read(), filename=os.path.basename(path))
+  - path: app/main.py
+    find: |
+      from app.routes import admin, exports, items, orders
+
+      ROUTERS = [items.router, orders.router, admin.router, exports.router]
+    replace: |
+      from app.routes import admin, attachments, exports, items, orders
+
+      ROUTERS = [items.router, orders.router, admin.router, exports.router, attachments.router]
+expected:
+  - id: traversal
+    category: security
+    severity: high
+    location:
+      path: app/routes/attachments.py
+      match: "path = os.path.join(ATTACHMENT_DIR, filename)"
+    description: >
+      The request-supplied filename is joined onto the attachments directory without
+      normalization or containment checks, so `..` segments or an absolute path read arbitrary
+      files. The repository already has storage.safe_join for exactly this.

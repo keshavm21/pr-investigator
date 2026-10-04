@@ -1,0 +1,34 @@
+id: clean-extract-rows-helper
+kind: clean
+title: Extract rows_to_dicts helper
+description: |
+  Small refactor: the same list comprehension appeared in three places. No behaviour change.
+edits:
+  - path: app/db.py
+    find: |
+      db = Database("inventory.db")
+    replace: |
+      def rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+          """Convert query results to plain dicts for JSON responses."""
+          return [dict(row) for row in rows]
+
+
+      db = Database("inventory.db")
+  - path: app/routes/items.py
+    find: "from app.db import db\n"
+    replace: "from app.db import db, rows_to_dicts\n"
+  - path: app/routes/items.py
+    find: "    return Response.json([dict(row) for row in rows])\n"
+    replace: "    return Response.json(rows_to_dicts(rows))\n"
+  - path: app/routes/admin.py
+    find: "from app.db import db\n"
+    replace: "from app.db import db, rows_to_dicts\n"
+  - path: app/routes/admin.py
+    find: "    return Response.json([dict(row) for row in rows])\n"
+    replace: "    return Response.json(rows_to_dicts(rows))\n"
+  - path: app/reports.py
+    find: "from app.db import Database\n"
+    replace: "from app.db import Database, rows_to_dicts\n"
+  - path: app/reports.py
+    find: "    return [dict(row) for row in rows]\n"
+    replace: "    return rows_to_dicts(rows)\n"

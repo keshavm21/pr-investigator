@@ -1,0 +1,102 @@
+id: seeded-none-dereference
+kind: seeded
+title: Email item owners when stock runs low
+description: |
+  After an order, if an item's remaining quantity drops below the threshold,
+  email the item's owner so they can restock.
+edits:
+  - path: app/notifications.py
+    find: |
+      import logging
+    replace: |
+      import logging
+      import sqlite3
+
+      from app.db import Database
+      from app.users import get_user
+  - path: app/notifications.py
+    find: |
+      def send_email(to: str, subject: str, body: str = "") -> None:
+          # Delivery is handled by the mail relay; this service only records the request.
+          logger.info("email to=%s subject=%s", to, subject)
+    replace: |
+      def send_email(to: str, subject: str, body: str = "") -> None:
+          # Delivery is handled by the mail relay; this service only records the request.
+          logger.info("email to=%s subject=%s", to, subject)
+
+
+      def notify_low_stock(db: Database, item: sqlite3.Row) -> None:
+          """Tell the item's owner that stock is running low."""
+          owner = get_user(db, item["owner_id"])
+          send_email(owner.email, f"Low stock: {item['name']}", f"Only {item['quantity']} left.")
+  - path: app/routes/orders.py
+    find: |
+      from app.models import OrderLine
+    replace: |
+      from app.models import OrderLine
+      from app.notifications import notify_low_stock
+  - path: app/routes/orders.py
+    find: |
+      TAX_RATE = Decimal("0.08")
+    replace: |
+      TAX_RATE = Decimal("0.08")
+      LOW_STOCK_THRESHOLD = 5
+  - path: app/routes/orders.py
+    find: |
+      def create_order(request: Request) -> Response:
+          user = current_user(request)
+          payload = request.json()
+          lines: list[OrderLine] = []
+          for entry in payload["lines"]:
+              item_id = int(entry["item_id"])
+              row = db.query_one("SELECT price, quantity FROM items WHERE id = ?", (item_id,))
+              if row is None:
+                  raise HTTPError(404, f"item {item_id} not found")
+              quantity = int(entry["quantity"])
+              if quantity < 1 or quantity > row["quantity"]:
+                  raise HTTPError(400, "invalid quantity")
+              lines.append(OrderLine(item_id, quantity, Decimal(row["price"])))
+          total = calculate_total(lines, TAX_RATE)
+          db.execute("INSERT INTO orders (user_id, total) VALUES (?, ?)", (user.id, str(total)))
+          for line in lines:
+              db.execute(
+                  "UPDATE items SET quantity = quantity - ? WHERE id = ?", (line.quantity, line.item_id)
+              )
+          return Response.json({"total": str(total)}, status=201)
+    replace: |
+      def create_order(request: Request) -> Response:
+          user = current_user(request)
+          payload = request.json()
+          lines: list[OrderLine] = []
+          for entry in payload["lines"]:
+              item_id = int(entry["item_id"])
+              row = db.query_one("SELECT price, quantity FROM items WHERE id = ?", (item_id,))
+              if row is None:
+                  raise HTTPError(404, f"item {item_id} not found")
+              quantity = int(entry["quantity"])
+              if quantity < 1 or quantity > row["quantity"]:
+                  raise HTTPError(400, "invalid quantity")
+              lines.append(OrderLine(item_id, quantity, Decimal(row["price"])))
+          total = calculate_total(lines, TAX_RATE)
+          db.execute("INSERT INTO orders (user_id, total) VALUES (?, ?)", (user.id, str(total)))
+          for line in lines:
+              db.execute(
+                  "UPDATE items SET quantity = quantity - ? WHERE id = ?", (line.quantity, line.item_id)
+              )
+              item = db.query_one(
+                  "SELECT id, name, quantity, owner_id FROM items WHERE id = ?", (line.item_id,)
+              )
+              if item is not None and item["quantity"] < LOW_STOCK_THRESHOLD:
+                  notify_low_stock(db, item)
+          return Response.json({"total": str(total)}, status=201)
+expected:
+  - id: none-deref
+    category: correctness
+    severity: medium
+    location:
+      path: app/notifications.py
+      match: "send_email(owner.email"
+    description: >
+      get_user returns None for an unknown user, and items can have no owner (owner_id NULL),
+      so owner.email raises AttributeError. This runs inside create_order after the order row
+      is written, so the request fails with the order partially applied.
