@@ -18,7 +18,7 @@ uv run pri eval validate  # check the evaluation cases (no LLM calls)
 uv run pri eval run       # score the baseline on the evaluation cases
 ```
 
-The default model is Gemini's free tier (`gemini-3.8-flash`; change it with `PRI_LLM_MODEL`). Free-tier inputs may be used for training, so PR Investigator refuses to send a private repository's code to it.
+It runs on Gemini's free tier. `.env.example` sets `PRI_LLM_MODEL=gemini-3.5-flash-lite`, the model the evaluation baseline uses (the code default is `gemini-3.8-flash`). Free-tier inputs may be used for training, so PR Investigator refuses to send a private repository's code to it.
 
 ## Development
 
