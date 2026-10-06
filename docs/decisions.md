@@ -8,7 +8,7 @@
 >
 > When a decision changes, update its row and the affected docs.
 >
-> Last updated: 2026-10-03. **There is no budget for paid API calls:** development and evaluation use free tiers only.
+> Last updated: 2026-10-05. **There is no budget for paid API calls:** development and evaluation use free tiers only.
 
 ## Accepted
 
@@ -18,12 +18,12 @@
 | D2 | **The LLM provider and model are configuration, not code.** The pipeline talks only to a thin internal LLM interface ([architecture.md](architecture.md) §7.1). Nothing hard-codes a vendor or model. | Switching to Claude, OpenAI or another provider means adding an adapter. The review pipeline doesn't change. |
 | D3 | **Free model tiers for development and evaluation, with no paid model routing.** Phase 1 uses **the Gemini API free tier** through the official `google-genai` SDK. **The evaluation model is `gemini-3.5-flash-lite`** (stable, free tier). The official Phase 1 B0 baseline used it, and Phase 2 must use it too so the comparison stays fair; `gemini-3.8-flash` returned 503 "high demand" and 429 errors on the free tier. The code default is still `gemini-3.8-flash`, so set `PRI_LLM_MODEL=gemini-3.5-flash-lite`. See §9 of [research.md](research.md). | Groq, OpenRouter's free models, GitHub Models and local Ollama were considered. Paid providers stay disabled by configuration until a budget exists. |
 | D21 | **Evaluation budget is $0.** Evals are sized to free-tier quotas, not dollars. | Response caching, request caps, a small suite and few repetitions ([evaluation.md](evaluation.md) §2.7). Revisit if a budget appears. |
+| D23 | **Project licence: MIT** (`LICENSE`, declared in `pyproject.toml`) | Apache-2.0 was the alternative: it adds an explicit patent grant. MIT is simpler. |
 
 ## Needed soon
 
 | ID | Decision | Status | Recommendation | Alternatives and tradeoffs |
 |---|---|---|---|---|
-| D23 | Project licence | Open | MIT or Apache-2.0 | Apache-2.0 adds an explicit patent grant. MIT is simpler. Decide before the first code push to the public repository. |
 | D24 | How to build the LLM abstraction | Proposed | **Our own small interface** (one protocol, normalized request and response types, per-adapter capability flags) with plain-module adapters: `fake`, `replay` and `gemini` in Phase 1, then `openai_compatible` and `anthropic` when needed | **LiteLLM:** many providers immediately, but a large dependency with its own abstractions and churn, and more than this project needs. **PydanticAI:** typed and model-agnostic, but its agent model would also take over orchestration (D4). Both add more than they save for one or two providers. |
 
 ## Architecture

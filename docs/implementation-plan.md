@@ -17,7 +17,7 @@ From [decisions.md](decisions.md):
 
 - **Accepted:** D1 (Python), D2 (configurable provider and model behind an internal LLM interface), D3 (free model tiers only, no paid routing), D21 ($0 budget).
 - **Recommended, awaiting confirmation:** the Gemini API free tier as the Phase 1 provider (D3), and our own thin LLM interface (D24).
-- **Still open:** D23, the project licence, before the first code push to the public repository.
+- **Decided:** D23, the project licence: MIT.
 
 **Zero-spend rule for Phase 1:** no paid API calls. Tests use the fake and replay adapters. Live runs use a free-tier key from a project without billing, and paid adapters are disabled by configuration.
 
