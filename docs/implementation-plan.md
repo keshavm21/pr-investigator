@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Status (2026-10-04):** Phase 1 is implemented, except its live B0 eval report, which needs a Gemini API key. Phase 2 has not started. No phase starts until it is approved.
+> **Status (2026-10-06):** Phase 1 is complete: merged, B0 baseline committed, CI green. Phase 2's plan below is under review; implementation hasn't started. No phase starts until it is approved.
 
 The order follows risk. The most uncertain question is whether agentic investigation produces precise, evidence-backed findings at acceptable cost, so it gets built and measured first. GitHub App plumbing and the UI are well-understood engineering and come later.
 
@@ -15,8 +15,7 @@ From Phase 1 onward, every phase ends with:
 
 From [decisions.md](decisions.md):
 
-- **Accepted:** D1 (Python), D2 (configurable provider and model behind an internal LLM interface), D3 (free model tiers only, no paid routing), D21 ($0 budget).
-- **Recommended, awaiting confirmation:** the Gemini API free tier as the Phase 1 provider (D3), and our own thin LLM interface (D24).
+- **Accepted:** D1 (Python), D2 (configurable provider and model behind an internal LLM interface), D3 (free model tiers only, no paid routing; Gemini through its official SDK), D21 ($0 budget), D24 (our own thin LLM interface).
 - **Decided:** D23, the project licence: MIT.
 
 **Zero-spend rule for Phase 1:** no paid API calls. Tests use the fake and replay adapters. Live runs use a free-tier key from a project without billing, and paid adapters are disabled by configuration.
@@ -91,33 +90,76 @@ Phases 1–5 make up the **minimum credible version**: a CLI- and UI-driven revi
 
 ## Phase 2: Agentic investigation with the evidence ledger
 
-**Goal:** replace "LLM looks at the diff" with "LLM forms hypotheses and investigates them with tools", where every claim must be grounded.
+**Goal:** add repository-aware investigation with mechanically verified evidence, and measure it fairly against B0.
+
+**Decisions:**
+
+- **D4:** our own bounded loop, no agent framework.
+- **D5:** the planner turns the PR into suspects, and each suspect gets an investigation. A1 is kept for comparison.
+- **D6:** typed read-only tools.
+- **D25:** at most 4 suspects per PR and 6 turns per suspect.
+
+**Held constant for a fair comparison with B0:** the model `gemini-3.5-flash-lite`, medium effort on every call, the same 10 cases, 1 sample, and location-only matching (±3 lines).
 
 **Essential**
 
-- **Planner.** Structured hypotheses, using simple regex-based risk signals as initial leads.
-- **Investigator loop.**
-  - a manual tool loop with parallel tool execution
-  - budgets: turns, tool calls, the task-budget token limit and wall-clock time
-  - budget notices as mid-conversation system messages
-  - handling for a missing verdict and for `refusal` and `max_tokens` stop reasons
-  - prompt caching, with the first request warming the cache before the rest fan out
-  - concurrency limits
-- **Evidence.**
-  - the observation ledger
-  - the `submit_verdict` schema
-  - deterministic grounding validation: evidence contained in observed ranges, content hashes match, anchor on a commentable line
-- **Traces.** Persisted traces and a CLI viewer (`pri show <run>`) that prints findings with evidence and the tool-call trace.
-- **Single-agent mode (A1),** kept for the ablation.
-- **Eval.** B0, A1 and A2 compared on the mini-suite, with cost and latency recorded. This is where measured request and token counts replace the estimates in [architecture.md](architecture.md) §7.4.
+- **Planner.** One call with structured output. From the PR metadata and the diff, it lists up to 4 suspects, each anchored on diff lines and stating the evidence that would confirm or refute it.
+- **Agent loop,** shared by A1 and A2.
+  - The conversation is append-only.
+  - Each turn runs the requested read-only tools and returns their results: at most 3 tools per turn, each result capped at about 4,000 characters.
+  - The loop stops on an accepted submission, the turn budget, a refusal, `max_tokens`, or an error.
+  - Investigations run one at a time.
+- **Evidence ledger.** Every tool result records exactly the line ranges it showed, under ids (O1, O2, ...). The diff hunks in the first message are recorded the same way.
+- **Mechanical evidence check.**
+  - A submission's evidence must cite existing observation ids, in the same file, with lines inside what was actually shown.
+  - The defect site must be on lines the PR diff shows.
+  - Snippets are re-extracted from the repository.
+  - A failing submission gets the errors back while turns remain. Otherwise the investigation ends inconclusive.
+- **Reviewers.**
+  - **A2:** the planner, then one investigation per suspect, ending with the terminal tool `submit_verdict`.
+  - **A1:** one loop over the whole PR with a 12-turn budget, ending with the terminal tool `report_findings`.
+
+  Only confirmed, verified findings are reported.
+- **Gemini adapter.**
+  - tool declarations
+  - conversion of function calls and function responses
+  - verbatim replay of the model's earlier turns, which Gemini requires for thought signatures
+  - automatic function calling disabled
+- **Traces.** One JSONL trace per run or eval case, and `pri show` to read it.
+- **Eval.** A `--reviewer b0|a1|a2` option, and summaries that record the git commit, the real request count and requests per case. A1 and A2 runs are compared with B0.
+- **Folded in:** the three deferred Phase 1 items: commit and request count in summaries, the automatic-function-calling warning, and the original rate-limit message.
+
+**Not in Phase 2:**
+
+- risk-signal leads and the context pack (Phase 3)
+- the independent verifier (Phase 4)
+- parallel investigations
+- prompt caching
+- a database, UI or GitHub App work
+
+The earlier plan listed regex risk signals as planner input; they move to Phase 3 with the other leads.
+
+**Live runs.** Each needs your go-ahead, and all run at 10 requests/minute:
+
+- one tool-calling check (at most 3 requests)
+- one A2 smoke review on the Phase 1 smoke-test PR (at most 26 requests)
+- one A2 eval run (at most 260 requests)
+- one A1 eval run (at most 120 requests)
+
+A2 and A1 can run on different days to stay inside 500 requests/day.
 
 **Exit criteria**
 
-- Every reported finding passes grounding.
-- The comparison table is committed.
-- Per-PR cost is measured.
+- Every reported A1 or A2 finding has at least one mechanically verified evidence item. This is enforced in code and tested.
+- Offline tests cover the loop, the evidence check and the adapter, including scripted end-to-end runs on real eval cases.
+- The A1 and A2 results, and a comparison with B0, are committed.
+- Requests and tokens per PR are measured.
 
-**Main risks:** free-tier quotas (roughly 80–120 requests per PR; mitigated by the replay cache, hypothesis caps, a development subset and a higher-quota model for cheap steps), weaker reasoning from free models than from frontier paid models (results are reported per model), hypotheses that are too vague to investigate (prompt iteration against the eval), and refusals on security topics (measured; framing and fallback handled).
+**Main risks**
+
+- **Free-tier limits.** Budgets, caps and the cache keep a run under the daily quota.
+- **A small free model may call tools poorly or cite evidence wrongly.** The evidence check rejects bad citations, and results are reported as measured.
+- **Gemini tool-calling details.** These get verified early with the live check.
 
 ---
 

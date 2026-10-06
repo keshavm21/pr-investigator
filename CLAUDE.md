@@ -35,10 +35,11 @@ Don't break these without an explicit decision from the user.
 - Python 3.13 is accepted. The rest of the stack in `docs/architecture.md` §12 (Postgres + pgvector, tree-sitter, ripgrep and so on) is proposed until accepted in `docs/decisions.md`.
 - **No paid API calls.** Development and evaluation use free model tiers only (Gemini free tier by default). Paid-provider adapters stay disabled unless the user explicitly says a budget exists.
 - **The pipeline is provider-neutral.** Review code talks only to the internal `LLMClient` interface (`docs/architecture.md` §7.1), never to a vendor SDK directly. Provider and model are configuration. Don't add routing layers, provider fallbacks or infrastructure for multi-provider support. Pipeline logic must not depend on provider extras like prompt caching or forced tool choice.
+- **No agent frameworks** (D4). The investigation is our own bounded loop on `LLMClient`; don't introduce LangGraph, LangChain or similar.
 - Agent conversations are append-only: never edit earlier turns.
 - Prompts are versioned files. Changing a prompt changes the prompt version recorded with each run.
 - Tests and CI must never call live LLM or GitHub APIs. Use the `fake` and `replay` LLM adapters and mocked HTTP.
-- Live reviews and evals consume free-tier quota (roughly 80–120 requests per PR once the agentic pipeline exists). Ask before running them, and never send private-repository content to a free tier that may train on it.
+- Live reviews and evals consume free-tier quota (up to about 26 requests per PR for the agentic reviewer under the D25 budget; 500 requests/day on this project). Ask before running them, and never send private-repository content to a free tier that may train on it.
 
 ## Commands
 

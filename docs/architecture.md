@@ -158,10 +158,10 @@ The pack carries signatures and locations, not whole files. The agent fetches bo
 
 ### 4.6 Planning (one LLM call, structured output)
 
-The planner receives the context pack, a review checklist per category, and the repository's focus areas. Its output is a schema-constrained JSON object, validated into typed models (§7.1). It contains:
+The planner receives the context pack, a review checklist per category, and the repository's focus areas. In Phase 2 it receives only the PR metadata and the diff; the context pack and leads arrive in Phase 3. Its output is a schema-constrained JSON object, validated into typed models (§7.1). It contains:
 
 - one paragraph describing what the PR is trying to do
-- up to *K* (initially 10) **hypotheses**, each with:
+- up to *K* (initially 4, D25) **hypotheses**, each with:
   - a category
   - an anchored location in the changed code
   - the suspected problem and why it is plausible
@@ -183,10 +183,10 @@ There is one investigator per hypothesis (or per cluster of hypotheses on the sa
 
 - **Prompt layout**, ordered from stable to volatile so the prefix caches well: tool definitions, then the system prompt (role, evidence rules, injection policy, output protocol), then the context pack, then the hypothesis and its budget.
 - **Loop** (D4). The harness calls the model through the LLM interface (§7.1) and runs every requested tool call. The tools are read-only and therefore parallel-safe, so they run concurrently and all results go back together in one message. This repeats until the model calls `submit_verdict` or a budget runs out. History is append-only: earlier turns are never edited. That keeps prompt caches valid where a provider has them, and satisfies providers that only accept replayed reasoning in unedited conversations.
-- **Budgets.** Initially: at most 20 tool calls, 12 turns, about 60k tokens and a wall-clock timeout, all enforced by the harness. Each turn tells the model how much budget remains. Near a limit, the harness adds an instruction to submit what it has, using `inconclusive` if the evidence is incomplete. A provider's native pacing feature (such as Claude's task budgets) can be used on top, never instead.
+- **Budgets** (D25). Initially at most 6 model turns per suspect. The harness also caps tool calls per turn and the size of each tool result, which bounds the tokens in each request, and it enforces a wall-clock timeout. Before the last turn, it tells the model to submit what it has, using `inconclusive` if the evidence is incomplete. A provider's native pacing feature (such as Claude's task budgets) can be used on top, never instead.
 - **Termination.** The prompt asks for `submit_verdict`. The harness doesn't rely on forcing a tool call, because not every provider supports it (current Claude models reject it). If a conversation ends without a verdict, the harness asks once more. After that it records the hypothesis as `inconclusive (no verdict)`. Verdict arguments are validated against the schema like any structured output.
 - **Stop reasons.** Adapters normalize each provider's stop reasons. Security discussions can trip a provider's safety filters. A `refused` stop is recorded and the hypothesis is marked as not investigated. The harness never rephrases a prompt to get around a refusal. When `max_tokens` cuts off a pending tool call, the input is discarded and the turn is retried with more room.
-- **Concurrency.** Up to *P* investigators run at once, further limited by a client-side rate limiter that respects the provider's requests-per-minute and tokens-per-minute quotas. On providers with prompt caching, the first request goes out alone and the others start once it begins streaming, so they read the shared prefix from the cache instead of each writing it again.
+- **Concurrency.** Phase 2 runs investigations one at a time. On the free tier, the rate limit, not concurrency, sets the pace, and sequential runs keep traces and replays simple. Parallel investigators, and the prompt-cache warm-up they would need, can come later if wall-clock time matters.
 
 Verdict schema (`submit_verdict`):
 
@@ -302,6 +302,7 @@ Rules that apply to every tool:
 | `search_code(pattern, mode, glob, context, ref)` | Literal or regex search | ripgrep (`--json`) | 1 |
 | `list_directory(path)` | Bounded tree listing | Worktree | 1 |
 | `submit_verdict(...)` | Terminal tool that returns the structured verdict | — | 2 |
+| `report_findings(...)` | Terminal tool for the single-agent reviewer (A1): up to 4 findings, each with evidence | — | 2 |
 | `find_symbol(name, kind?)` | Where is X defined? | Symbol index | 3 |
 | `find_references(symbol)` | Call sites and usages. Results say whether they're name-based or precise. | Reference index (LSP in S2) | 3 |
 | `get_symbol_context(path, line)` | Enclosing function or class, signature, decorators, direct callers and callees | Symbol index | 3 |
@@ -412,7 +413,7 @@ The provider and model are configuration: `PRI_LLM_PROVIDER`, `PRI_LLM_MODEL`, a
 
 ### 7.2 Phase 1 provider
 
-The recommendation (D3) is the **Gemini API free tier with a Gemini Flash model**. The default is `gemini-3.8-flash`, the newest stable free-tier Flash model in Google's docs, with `gemini-3.5-flash-lite` as the alternative if its quota runs out. Google shows each project's free-tier limits in AI Studio rather than publishing them. It's the only free option whose per-minute token allowance and context window fit a whole diff plus context in a single request:
+The provider (D3) is the **Gemini API free tier with a Gemini Flash model**. The evaluation model is `gemini-3.5-flash-lite`: the official B0 baseline used it, and Phase 2 comparisons must use it too. `gemini-3.8-flash` stays the code default but returned "high demand" and rate-limit errors on the free tier. Google shows each project's free-tier limits in AI Studio rather than publishing them. It's the only free option whose per-minute token allowance and context window fit a whole diff plus context in a single request:
 
 - Groq's free tier allows about 6–8k tokens per minute.
 - GitHub Models caps input at about 8k tokens per request.
@@ -432,23 +433,25 @@ Zero-spend guards:
 | Stage | Call shape | Effort hint | Output |
 |---|---|---|---|
 | Baseline reviewer (B0, B1) | Single call | medium | Structured output |
-| Planner | Single call | high | Structured output |
-| Investigator | Tool loop | high | `submit_verdict` tool call |
+| Planner | Single call | medium | Structured output |
+| Investigator | Tool loop | medium | `submit_verdict` tool call |
 | Skeptic verifier | Short tool loop | high | Structured output |
 | Dedupe and summary | Single call | low | Structured output |
 | Eval judge | Single call | low | Structured output |
+
+Phase 2 keeps every call at medium effort, the same as B0, so comparisons with the baseline measure the investigation rather than extra reasoning.
 
 ### 7.4 Usage estimates
 
 Free tiers are limited by requests and tokens per minute and per day, not by money.
 
 - **Baseline (Phase 1).** One request per PR. Ten cases × 3 repetitions is about 30 requests, plus judge calls. That fits comfortably in a day's free quota.
-- **Full pipeline (Phase 2 onward).** Roughly 80–120 requests per medium PR: the planner, about 8 investigations of about 10 turns each, and the verifier.
-  - At about 10 requests per minute, that's more than 10 minutes per PR.
-  - A daily quota of about 1,500 requests covers roughly 10–15 PR reviews.
-  - Evaluating one configuration on 10 cases × 3 repetitions therefore takes two to three days of quota.
+- **Agentic reviewers (Phase 2).** With the D25 budget, A2 makes at most about 26 requests per PR: one planner call (plus one possible repair) and up to 4 suspects × 6 turns. A1 makes at most 12. This project's free tier for `gemini-3.5-flash-lite` allows 15 requests/min, 250K tokens/min and 500 requests/day:
+  - One 10-case A2 eval run is at most about 260 requests, and A1 at most about 120, so both fit in one day's quota with little room for anything else.
+  - Running at 10 requests/min, below the limit of 15, with capped tool output keeps the worst case under the tokens-per-minute limit.
+  - A full A2 run takes roughly 15–30 minutes.
 
-  Mitigations: the replay cache, lower hypothesis caps during development, a higher-quota free model (Flash-Lite) for low-stakes steps, and fewer repetitions.
+  Mitigations: the replay cache (re-scoring is free), a request cap on every run, and developing against the scripted fake provider rather than the live API.
 - **On a paid provider later.** At Claude Opus 5.5 list prices, a full review would cost roughly $3–5 per PR at high effort.
 
 Free-tier limits change often and aren't guaranteed. Check the provider's console before relying on any number here.

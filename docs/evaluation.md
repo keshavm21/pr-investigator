@@ -137,14 +137,17 @@ Effort levels and, if D3 allows, cheaper models per stage are tested as further 
 
 The budget is $0 (D21), so free-tier quotas are the constraint ([architecture.md](architecture.md) §7.4).
 
-| Configuration | Requests per case | 10 cases × 3 repetitions |
+| Configuration | Requests per case (most) | 10 cases × 1 sample |
 |---|---|---|
-| B0 / B1 baseline | 1, plus judge calls | About 30–60 requests; minutes of quota |
-| A1–A3 agentic | Roughly 80–120 | About 2,400–3,600 requests; two to three days of a ~1,500-request daily quota per configuration |
+| B0 / B1 baseline | 1, plus judge calls | About 10–20 requests |
+| A1 single agent | 12 | About 120 requests |
+| A2 planner + investigations (D25) | About 26 | About 260 requests |
+
+This project's free tier for `gemini-3.5-flash-lite` allows 500 requests a day, so one A2 run and one A1 run fit in a day's quota, with little room for anything else.
 
 Consequences:
 
 - Phase 1 evaluates only the baseline, which fits easily.
-- From Phase 2, agentic configurations run on a development subset (5–10 cases) with 1–2 repetitions. The full table in Phase 7 is spread over several days of quota.
+- From Phase 2, agentic configurations run once per case (1 sample), developed against the scripted fake provider first. More samples, and the full table in Phase 7, are spread over several days of quota.
 - Recorded responses make every reported number reproducible without new calls.
 - If a budget appears later, the same harness runs unchanged on a paid provider. At Claude Opus 5.5 high effort, the full ablation table would cost roughly $1,000–2,000.
