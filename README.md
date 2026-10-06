@@ -40,3 +40,7 @@ uv run mypy
 - [Implementation plan](docs/implementation-plan.md)
 - [Decision register](docs/decisions.md)
 - [Research notes](docs/research.md)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
