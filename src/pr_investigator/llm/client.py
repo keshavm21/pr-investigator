@@ -140,7 +140,9 @@ def _response(
         parsed=parsed,
         tool_calls=final.tool_calls,
         stop_reason=final.stop_reason,
+        stop_detail=final.stop_detail,
         usage=usage,
         attempts=len(attempts),
         cached=all(c.cached for c in attempts),
+        provider_data=final.provider_data,
     )

@@ -106,7 +106,8 @@ class GuardedAdapter:
                     raise LLMQuotaExhaustedError(
                         f"{self.provider} kept rate-limiting after {attempt + 1} attempts. "
                         "The free quota may be used up for now: try again later, lower "
-                        "PRI_LLM_REQUESTS_PER_MINUTE, or switch PRI_LLM_MODEL."
+                        "PRI_LLM_REQUESTS_PER_MINUTE, or switch PRI_LLM_MODEL. "
+                        f"Last error: {exc}"
                     ) from exc
                 delay = exc.retry_after if exc.retry_after is not None else _backoff(attempt)
             except LLMTransientError:

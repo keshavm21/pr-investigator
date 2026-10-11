@@ -28,6 +28,8 @@ from pr_investigator.llm.types import (
     RequestBudgetExceededError,
     Role,
     StopReason,
+    ToolCall,
+    ToolSpec,
     Usage,
 )
 from pr_investigator.review.baseline import BaselineOutput
@@ -260,3 +262,72 @@ async def test_fake_provider_returns_schema_valid_objects() -> None:
     assert isinstance(response.parsed, BaselineOutput) and response.parsed.findings == []
     schema = BaselineOutput.model_json_schema()
     BaselineOutput.model_validate(minimal_instance(schema, schema["$defs"]))
+
+
+# --- tool calling (Phase 2 step 1) -----------------------------------------------------------
+
+READ = ToolSpec(name="read_file", description="Read a file.", parameters={"type": "object"})
+
+
+async def test_tool_calls_and_replay_data_pass_through_the_client() -> None:
+    call = ToolCall(id="c1", name="read_file", arguments={"path": "a.py"})
+    completion = Completion(
+        provider="fake",
+        model="scripted",
+        tool_calls=[call],
+        stop_reason=StopReason.TOOL_USE,
+        provider_data={"opaque": {"signature": "abc"}},
+    )
+    response = await LLMClient(ScriptedAdapter([completion])).generate(
+        request(output_schema=None, tools=[READ])
+    )
+    assert response.stop_reason is StopReason.TOOL_USE and response.parsed is None
+    message = response.to_message()
+    assert message.role is Role.ASSISTANT
+    assert message.tool_calls == [call]
+    assert message.provider_data == {"opaque": {"signature": "abc"}}
+
+
+def test_cache_key_covers_tool_results_and_replay_data() -> None:
+    call = ToolCall(id="c1", name="read_file", arguments={"path": "a.py"})
+    history = [
+        Message.user("question"),
+        Message(role=Role.ASSISTANT, tool_calls=[call], provider_data={"turn": 1}),
+        Message.tool_result(call, "file contents"),
+    ]
+
+    def key(messages: list[Message]) -> str:
+        return request_key("p", "m", request(output_schema=None, tools=[READ], messages=messages))
+
+    assert key(history) == key(list(history))
+    assert key(history) != key([*history[:2], Message.tool_result(call, "other contents")])
+    assert key(history) != key(
+        [*history[:2], Message.tool_result(call, "file contents", is_error=True)]
+    )
+    changed_turn = history[1].model_copy(update={"provider_data": {"turn": 2}})
+    assert key(history) != key([history[0], changed_turn, history[2]])
+
+
+def test_plain_messages_keep_their_original_cache_payload() -> None:
+    # Fields added for tool calling are left out while at their defaults, so requests without
+    # tools (B0) keep the cache keys of the committed baseline.
+    plain = request(
+        messages=[Message.user("u"), Message(role=Role.ASSISTANT, text="a")]
+    ).cache_payload()
+    assert [sorted(m) for m in plain["messages"]] == [
+        ["role", "text", "tool_call_id", "tool_calls"]
+    ] * 2
+    call = ToolCall(id="c1", name="read_file", arguments={})
+    tool = request(
+        output_schema=None, tools=[READ], messages=[Message.tool_result(call, "x", is_error=True)]
+    ).cache_payload()
+    assert tool["messages"][0]["tool_name"] == "read_file"
+    assert tool["messages"][0]["is_error"] is True
+
+
+async def test_exhausted_quota_message_keeps_the_original_error() -> None:
+    original = "Gemini rate limit or quota hit (GenerateRequestsPerDay-FreeTier): quota exceeded"
+    adapter = FlakyAdapter([LLMRateLimitError(original)] * 3)
+    with pytest.raises(LLMQuotaExhaustedError) as raised:
+        await guarded(adapter, FakeClock(), RequestBudget()).complete(request())
+    assert original in str(raised.value)

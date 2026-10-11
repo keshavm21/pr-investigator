@@ -327,22 +327,43 @@ def render_file(f: FileDiff) -> str:
             11        -  deleted line
                    11 +  added line
     """
-    out = [f"=== {describe_file(f)} ==="]
-    if f.is_binary:
-        out.append("(binary file, contents not shown)")
+    out = [file_heading(f)]
+    notice = file_notice(f)
+    if notice is not None:
+        out.append(notice)
+    if f.is_binary or f.is_submodule:
         return "\n".join(out)
-    if f.is_submodule:
-        out.append("(submodule change, contents not shown)")
-        return "\n".join(out)
-    if not f.hunks:
-        out.append("(no content changes)")
     for hunk in f.hunks:
-        section = f" {hunk.section}" if hunk.section else ""
-        out.append(f"{hunk.header}{section}")
+        out.append(hunk_heading(hunk))
         for dl in hunk.lines:
-            old = "" if dl.old_lineno is None else str(dl.old_lineno)
-            new = "" if dl.new_lineno is None else str(dl.new_lineno)
-            out.append(f"{old:>6} {new:>6} {dl.kind.value}  {dl.text}")
-            if dl.no_newline_at_eof:
-                out.append(f"{'':>6} {'':>6}    {_NO_NEWLINE}")
+            out.extend(render_line(dl))
     return "\n".join(out)
+
+
+def file_heading(f: FileDiff) -> str:
+    return f"=== {describe_file(f)} ==="
+
+
+def file_notice(f: FileDiff) -> str | None:
+    """A note shown instead of hunks, or None when the file has hunks to show."""
+    if f.is_binary:
+        return "(binary file, contents not shown)"
+    if f.is_submodule:
+        return "(submodule change, contents not shown)"
+    if not f.hunks:
+        return "(no content changes)"
+    return None
+
+
+def hunk_heading(hunk: Hunk) -> str:
+    return f"{hunk.header} {hunk.section}" if hunk.section else hunk.header
+
+
+def render_line(dl: DiffLine) -> list[str]:
+    """One diff line as `old new marker text`, plus the no-newline marker when present."""
+    old = "" if dl.old_lineno is None else str(dl.old_lineno)
+    new = "" if dl.new_lineno is None else str(dl.new_lineno)
+    rows = [f"{old:>6} {new:>6} {dl.kind.value}  {dl.text}"]
+    if dl.no_newline_at_eof:
+        rows.append(f"{'':>6} {'':>6}    {_NO_NEWLINE}")
+    return rows

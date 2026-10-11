@@ -1,6 +1,7 @@
 """Core domain types shared by ingestion, review, rendering and evaluation."""
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,27 @@ class DataClass(StrEnum):
     PUBLIC = "public"  # public repository
     TEST = "test"  # our own evaluation fixtures
     PRIVATE = "private"  # private repository, or anything we can't prove is public
+
+
+class EvidenceRole(StrEnum):
+    DEFECT_SITE = "defect_site"  # where the problem is; must be on lines the PR diff shows
+    CONTEXT = "context"  # supporting code anywhere: callers, definitions, guards, tests
+    ABSENCE = "absence"  # a search that found nothing, e.g. "no validation exists"
+
+
+class Evidence(BaseModel):
+    """One verified evidence item. The snippet is re-read from the repository at the analyzed
+    commit by the system; it is never copied from model output."""
+
+    role: EvidenceRole
+    observation_id: str
+    note: str = Field(description="The model's explanation of why this item matters")
+    ref: Literal["head", "base"] | None = None
+    path: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    snippet: str | None = None
+    query: str | None = Field(default=None, description="For absence: the search with no matches")
 
 
 class Anchor(BaseModel):
