@@ -12,13 +12,11 @@ from pydantic import BaseModel, Field, ValidationError
 
 from pr_investigator.agent.evidence import EvidenceRef, check_evidence
 from pr_investigator.agent.ledger import ObservationLedger
-from pr_investigator.agent.loop import LoopResult, Submission
+from pr_investigator.agent.loop import LoopResult, Submission, validation_problems
 from pr_investigator.diff import ParsedDiff
 from pr_investigator.domain import Anchor, Category, Confidence, Evidence, Severity
 from pr_investigator.llm.types import ToolSpec
 from pr_investigator.workspace import Workspace
-
-MAX_VALIDATION_PROBLEMS = 8
 
 
 class VerdictStatus(StrEnum):
@@ -89,7 +87,7 @@ class SubmitVerdict:
         try:
             verdict = Verdict.model_validate(arguments)
         except ValidationError as exc:
-            return Submission(errors=_problems(exc))
+            return Submission(errors=validation_problems(exc))
         result = check_evidence(
             verdict.evidence,
             ledger,
@@ -109,14 +107,3 @@ def outcome_status(result: LoopResult[CheckedVerdict]) -> VerdictStatus:
     if result.submission is None:
         return VerdictStatus.INCONCLUSIVE
     return result.submission.verdict.status
-
-
-def _problems(exc: ValidationError) -> list[str]:
-    errors = exc.errors()
-    problems = [
-        f"{'.'.join(str(part) for part in error['loc']) or 'arguments'}: {error['msg']}"
-        for error in errors[:MAX_VALIDATION_PROBLEMS]
-    ]
-    if len(errors) > MAX_VALIDATION_PROBLEMS:
-        problems.append(f"and {len(errors) - MAX_VALIDATION_PROBLEMS} more problems")
-    return problems

@@ -1,0 +1,391 @@
+"""The planner and the agentic reviewers A2 and A1, with a scripted provider. All offline."""
+
+from typing import Any
+
+import pytest
+
+from pr_investigator.agent.investigate import investigation_opening, review_a2
+from pr_investigator.agent.loop import AgentLoop, LoopConfig, StopCause
+from pr_investigator.agent.models import AgentBudget
+from pr_investigator.agent.planner import (
+    PlannerOutput,
+    Suspect,
+    SuspectOut,
+    make_plan,
+    select_suspects,
+)
+from pr_investigator.agent.single import review_a1
+from pr_investigator.agent.verdict import SubmitVerdict, VerdictStatus
+from pr_investigator.diff import ParsedDiff
+from pr_investigator.domain import (
+    Anchor,
+    Category,
+    DataClass,
+    EvidenceRole,
+    ReviewTarget,
+    Side,
+)
+from pr_investigator.llm.client import LLMClient
+from pr_investigator.llm.fake import Script, ScriptedAdapter
+from pr_investigator.llm.types import Completion, StopReason, ToolCall, Usage
+from pr_investigator.review.baseline import Coverage
+from pr_investigator.workspace import Workspace
+from tests.support import MakeRepo, OpenWorkspace
+
+PRICING_BASE = (
+    "def total(items, tax):\n"
+    "    subtotal = sum(i.price for i in items)\n"
+    "    return subtotal * (1 + tax)\n"
+)
+PRICING_HEAD = (
+    "def total(items):\n    subtotal = sum(i.price for i in items)\n    return subtotal\n"
+)
+ORDERS = (
+    "from app.pricing import total\n\n\n"
+    "def order_total(order):\n    return total(order.items, 0.2)\n"
+)
+
+Setup = tuple[ReviewTarget, Workspace, ParsedDiff]
+
+
+@pytest.fixture
+def pr(make_repo: MakeRepo, open_workspace: OpenWorkspace) -> Setup:
+    """A PR that drops total()'s tax parameter but leaves the caller in orders.py unchanged."""
+    repo = make_repo("repo")
+    repo.write("app/pricing.py", PRICING_BASE)
+    repo.write("app/orders.py", ORDERS)
+    repo.write("app/util.py", "def clamp(x):\n    return x\n")
+    repo.commit("base")
+    repo.branch("pr")
+    repo.write("app/pricing.py", PRICING_HEAD)
+    repo.write("app/util.py", "def clamp(x):\n    return max(0, x)\n")
+    repo.commit("pr")
+    target, workspace = open_workspace(repo)
+    return target, workspace, workspace.diff()
+
+
+def reply(*calls: ToolCall, text: str = "") -> Completion:
+    return Completion(
+        provider="fake",
+        model="scripted",
+        text=text,
+        tool_calls=list(calls),
+        stop_reason=StopReason.TOOL_USE if calls else StopReason.END,
+        usage=Usage(input_tokens=100, output_tokens=10),
+    )
+
+
+def tool(name: str, **arguments: Any) -> ToolCall:
+    return ToolCall(id=f"{name}-call", name=name, arguments=arguments)
+
+
+def cite(oid: str, role: str, path: str, start: int, end: int) -> dict[str, Any]:
+    return {
+        "observation_id": oid,
+        "role": role,
+        "path": path,
+        "start_line": start,
+        "end_line": end,
+        "note": "why",
+    }
+
+
+def claim(evidence: list[dict[str, Any]], **fields: Any) -> dict[str, Any]:
+    return {
+        "claim": "order_total still passes a tax argument to total()",
+        "explanation": "order_total raises TypeError.",
+        "category": "correctness",
+        "severity": "high",
+        "confidence": "high",
+        "evidence": evidence,
+        **fields,
+    }
+
+
+def suspect(path: str, start: int, end: int, priority: int, title: str = "s") -> dict[str, Any]:
+    return {
+        "title": title,
+        "category": "correctness",
+        "path": path,
+        "side": "RIGHT",
+        "start_line": start,
+        "end_line": end,
+        "problem": "p",
+        "how_to_check": "h",
+        "priority": priority,
+    }
+
+
+BROKEN_CALLER = [
+    cite("O1", "defect_site", "app/pricing.py", 1, 1),
+    cite("O3", "context", "app/orders.py", 5, 5),
+]
+
+
+async def test_a2_plans_investigates_each_suspect_and_reports_only_verified_findings(
+    pr: Setup,
+) -> None:
+    target, workspace, diff = pr
+    plan = {
+        "summary": "Drops the tax parameter from total().",
+        "suspects": [
+            suspect("b/app/pricing.py", 1, 1, 1, "callers still pass tax"),
+            suspect("app/util.py", 2, 2, 2, "clamp changes behaviour"),
+            suspect("app/missing.py", 1, 1, 1, "invented file"),
+            suspect("app/pricing.py", 1, 3, 3, "same problem again"),
+            suspect("app/util.py", 1, 1, 5, "unlikely"),
+            suspect("app/util.py", 1, 1, 9, "least likely"),
+        ],
+    }
+    script: list[Script] = [
+        plan,
+        # S1: reads the caller, then confirms with a defect site and the caller as context.
+        reply(tool("read_file", path="app/orders.py")),
+        reply(tool("submit_verdict", status="confirmed", **claim(BROKEN_CALLER))),
+        # S2: refuted, citing the opening diff.
+        reply(
+            tool(
+                "submit_verdict",
+                status="refuted",
+                **claim([cite("O1", "context", "app/util.py", 1, 2)]),
+            )
+        ),
+        # S3: confirms the same lines as S1, so it is a duplicate.
+        reply(
+            tool(
+                "submit_verdict",
+                status="confirmed",
+                **claim([cite("O1", "defect_site", "app/pricing.py", 1, 3)]),
+            )
+        ),
+        # S4: never submits.
+        reply(text="Looks fine."),
+        reply(text="Still fine."),
+    ]
+    adapter = ScriptedAdapter(script)
+    budget = AgentBudget(investigation_turns=2)
+    review = await review_a2(
+        target, workspace, diff, LLMClient(adapter), max_diff_chars=50_000, budget=budget
+    )
+
+    assert [s.title for s in review.suspects] == [
+        "callers still pass tax",
+        "clamp changes behaviour",
+        "same problem again",
+        "unlikely",
+    ]
+    assert [s.id for s in review.suspects] == ["S1", "S2", "S3", "S4"]
+    assert review.suspects[0].path == "app/pricing.py"  # the b/ prefix is normalized
+    assert [d.reason for d in review.dropped_suspects] == [
+        "app/missing.py isn't a shown changed file",
+        "over the limit of 4 suspects",
+    ]
+    investigations = review.investigations
+    assert [i.status for i in investigations] == [
+        VerdictStatus.CONFIRMED,
+        VerdictStatus.REFUTED,
+        VerdictStatus.CONFIRMED,
+        VerdictStatus.INCONCLUSIVE,
+    ]
+    assert [i.loop.cause for i in investigations] == [StopCause.SUBMITTED] * 3 + [
+        StopCause.TURN_BUDGET
+    ]
+    assert [(i.finding_id, i.duplicate_of) for i in investigations] == [
+        ("F1", None),
+        (None, None),
+        (None, "F1"),
+        (None, None),
+    ]
+
+    (finding,) = review.findings
+    assert finding.anchor == Anchor(
+        path="app/pricing.py", side=Side.RIGHT, start_line=1, end_line=1
+    )
+    assert finding.title == "order_total still passes a tax argument to total()"
+    assert finding.anchor_in_diff
+    assert [(e.role, e.snippet) for e in finding.evidence] == [
+        (EvidenceRole.DEFECT_SITE, "def total(items):"),
+        (EvidenceRole.CONTEXT, "    return total(order.items, 0.2)"),
+    ]
+    assert all(any(e.role is EvidenceRole.DEFECT_SITE for e in f.evidence) for f in review.findings)
+
+    assert review.requests == 7 and len(adapter.requests) == 7 and review.cached_requests == 0
+    assert review.usage.input_tokens == 600  # the planner's scripted reply reports no usage
+    assert set(review.prompts) == {"planner.v1", "investigator.v1", "agent_loop.v1"}
+    assert [r.stage for r in adapter.requests] == ["plan"] + ["investigate"] * 6
+    assert adapter.requests[0].output_schema is PlannerOutput
+    assert "messages" not in review.model_dump_json()  # conversations are for traces
+
+    opening = adapter.requests[1].messages[0].text
+    assert "Suspect S1: callers still pass tax" in opening
+    assert "Location: app/pricing.py lines 1-1 (new version)" in opening
+    assert "Budget: 2 turns (each reply is one turn), up to 3 tool calls per turn." in opening
+    assert "<untrusted-files-" in opening
+    assert (
+        "[Observations you can cite: O1 = app/pricing.py lines 1-3 (head); "
+        "O2 = app/pricing.py lines 1-3 (base)]"
+    ) in opening
+
+
+async def test_a1_reviews_the_whole_pr_and_fixes_a_rejected_report(pr: Setup) -> None:
+    target, workspace, diff = pr
+    # The opening records O1/O2 (pricing.py head/base) and O3/O4 (util.py head/base); the
+    # read is O5.
+    script: list[Script] = [
+        reply(
+            tool(
+                "report_findings",
+                summary="s",
+                findings=[claim([cite("O9", "defect_site", "app/pricing.py", 1, 1)])],
+            )
+        ),
+        reply(tool("read_file", path="app/orders.py")),
+        reply(
+            tool(
+                "report_findings",
+                summary="Drops the tax parameter from total().",
+                findings=[
+                    claim(
+                        [
+                            cite("O1", "defect_site", "app/pricing.py", 1, 1),
+                            cite("O5", "context", "app/orders.py", 5, 5),
+                        ]
+                    )
+                ],
+            )
+        ),
+    ]
+    adapter = ScriptedAdapter(script)
+    review = await review_a1(target, workspace, diff, LLMClient(adapter))
+
+    assert review.reviewer == "a1" and review.summary == "Drops the tax parameter from total()."
+    (finding,) = review.findings
+    assert finding.evidence[1].snippet == "    return total(order.items, 0.2)"
+    assert review.single is not None and review.single.cause is StopCause.SUBMITTED
+    assert review.single.rejections == [
+        ["finding 1: evidence 1 (O9): no observation with that id was shown to you"]
+    ]
+    assert review.requests == 3 and set(review.prompts) == {"single_agent.v1", "agent_loop.v1"}
+    request = adapter.requests[0]
+    assert request.stage == "single_agent" and request.tools[-1].name == "report_findings"
+    opening = request.messages[0].text
+    assert "<untrusted-pr-" in opening and "Budget: 12 turns" in opening
+    assert "O3 = app/util.py lines 1-2 (head)" in opening
+
+
+async def test_a1_enforces_the_findings_limit_and_accepts_an_empty_report(pr: Setup) -> None:
+    target, workspace, diff = pr
+    two = [claim([cite("O1", "defect_site", "app/pricing.py", 1, 1)])] * 2
+    script: list[Script] = [
+        reply(tool("report_findings", summary="s", findings=two)),
+        reply(tool("report_findings", summary="Nothing to report.", findings=[])),
+    ]
+    review = await review_a1(
+        target,
+        workspace,
+        diff,
+        LLMClient(ScriptedAdapter(script)),
+        budget=AgentBudget(max_findings=1),
+    )
+    assert review.findings == [] and review.summary == "Nothing to report."
+    assert review.single is not None
+    assert review.single.rejections == [
+        ["you reported 2 findings; the limit is 1. Keep the best-supported ones."]
+    ]
+
+
+async def test_a1_without_an_accepted_report_has_no_findings(pr: Setup) -> None:
+    target, workspace, diff = pr
+    script: list[Script] = [reply(text="hmm"), reply(text="hmm")]
+    budget = AgentBudget(single_agent_turns=2)
+    review = await review_a1(
+        target, workspace, diff, LLMClient(ScriptedAdapter(script)), budget=budget
+    )
+    assert review.findings == []
+    assert review.summary == "The review ended without an accepted report (turn_budget)."
+
+
+async def test_nothing_reviewable_spends_no_requests(
+    make_repo: MakeRepo, open_workspace: OpenWorkspace
+) -> None:
+    repo = make_repo("repo")
+    repo.write("poetry.lock", "a\n")
+    repo.commit("base")
+    repo.branch("pr")
+    repo.write("poetry.lock", "b\n")
+    repo.commit("pr")
+    target, workspace = open_workspace(repo)
+    diff = workspace.diff()
+    empty = LLMClient(ScriptedAdapter([]))  # any request would fail the test
+    a2 = await review_a2(target, workspace, diff, empty, max_diff_chars=50_000)
+    a1 = await review_a1(target, workspace, diff, empty)
+    for review in (a2, a1):
+        assert review.findings == [] and review.requests == 0
+        assert review.coverage.skipped == {"poetry.lock": "lockfile"}
+    assert a2.investigations == [] and a1.single is None
+
+
+async def test_the_planner_sees_what_b0_sees(pr: Setup) -> None:
+    target, _workspace, diff = pr
+    adapter = ScriptedAdapter([{"summary": "s", "suspects": []}])
+    plan = await make_plan(target, diff, LLMClient(adapter), max_diff_chars=50_000, max_suspects=4)
+    assert plan.suspects == [] and plan.attempts == 1
+    text = adapter.requests[0].messages[0].text
+    assert text.startswith("Plan the review of this pull request.")
+    assert "<untrusted-pr-" in text and "<untrusted-diff-" in text
+    assert "def total(items):" in text and adapter.requests[0].tools == []
+
+
+def test_suspect_selection_orders_by_priority_and_normalizes_lines(pr: Setup) -> None:
+    _target, _workspace, diff = pr
+    coverage = Coverage(reviewed=["app/pricing.py", "app/util.py"])
+    proposed = [
+        SuspectOut.model_validate(suspect("app/util.py", 2, 1, 3, "third")),
+        SuspectOut.model_validate(suspect("app/pricing.py", 1, 1, 1, "first")),
+        SuspectOut.model_validate(suspect("app/util.py", 1, 1, 3, "fourth")),
+        SuspectOut.model_validate(suspect("./app/pricing.py", 3, 3, 2, "second")),
+    ]
+    suspects, dropped = select_suspects(proposed, coverage, diff, max_suspects=3)
+    assert [(s.id, s.title) for s in suspects] == [
+        ("S1", "first"),
+        ("S2", "second"),
+        ("S3", "third"),
+    ]
+    assert (suspects[2].start_line, suspects[2].end_line) == (1, 2)  # swapped lines are sorted
+    assert suspects[1].path == "app/pricing.py"
+    assert [d.suspect.title for d in dropped] == ["fourth"]
+    assert suspects[0].category is Category.CORRECTNESS
+
+
+async def test_an_opening_too_small_for_the_whole_file_starts_at_the_suspect_hunk(
+    make_repo: MakeRepo, open_workspace: OpenWorkspace
+) -> None:
+    repo = make_repo("repo")
+    base = [f"value_{n} = {n}\n" for n in range(1, 301)]
+    repo.write("big.py", "".join(base))
+    repo.commit("base")
+    repo.branch("pr")
+    head = list(base)
+    for n in range(5, 80):  # a large first hunk
+        head[n - 1] = f"value_{n} = {n} * 2\n"
+    head[249] = "value_250 = None\n"  # the suspect's hunk
+    repo.write("big.py", "".join(head))
+    repo.commit("pr")
+    _target, workspace = open_workspace(repo)
+    diff = workspace.diff()
+    config = LoopConfig(stage="investigate", data_class=DataClass.TEST, max_turns=1)
+    loop = AgentLoop(
+        LLMClient(ScriptedAdapter([])), workspace, diff, SubmitVerdict(workspace, diff), config
+    )
+    out = SuspectOut.model_validate(suspect("big.py", 250, 250, 1))
+    opening = investigation_opening(
+        loop,
+        Suspect(id="S1", **out.model_dump()),
+        "summary",
+        AgentBudget(investigation_diff_chars=1_000),
+    )
+    assert "value_250 = None" in opening
+    head_observation = loop.ledger.get("O1")
+    assert head_observation is not None and head_observation.start_line is not None
+    assert head_observation.end_line is not None
+    assert head_observation.start_line <= 250 <= head_observation.end_line

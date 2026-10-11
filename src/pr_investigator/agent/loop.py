@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from pr_investigator.agent.ledger import ObservationLedger, printable
 from pr_investigator.diff import ParsedDiff
 from pr_investigator.domain import DataClass
@@ -52,6 +54,7 @@ from pr_investigator.tools import (
 from pr_investigator.workspace import Workspace
 
 PROMPT_NAME, PROMPT_VERSION = "agent_loop", 1
+MAX_VALIDATION_PROBLEMS = 8
 
 
 class StopCause(StrEnum):
@@ -77,6 +80,18 @@ class TerminalTool[T](Protocol):
     def spec(self) -> ToolSpec: ...
 
     def check(self, arguments: dict[str, Any], ledger: ObservationLedger) -> Submission[T]: ...
+
+
+def validation_problems(exc: ValidationError) -> list[str]:
+    """A terminal tool's argument errors, one line per field, for the model to fix."""
+    errors = exc.errors()
+    problems = [
+        f"{'.'.join(str(part) for part in error['loc']) or 'arguments'}: {error['msg']}"
+        for error in errors[:MAX_VALIDATION_PROBLEMS]
+    ]
+    if len(errors) > MAX_VALIDATION_PROBLEMS:
+        problems.append(f"and {len(errors) - MAX_VALIDATION_PROBLEMS} more problems")
+    return problems
 
 
 @dataclass(frozen=True)

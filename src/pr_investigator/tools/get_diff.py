@@ -84,7 +84,7 @@ class GetDiff:
                     rows.extend(render_line(dl))
                 if budget.fits(*rows):
                     budget.add(*rows)
-                    observations.extend(_observations(self.name, file, hunk.lines))
+                    observations.extend(hunk_observations(self.name, file, hunk.lines))
                     continue
                 if observations:  # something is already shown: stop on a hunk boundary
                     stop = (file_index, number)
@@ -98,7 +98,7 @@ class GetDiff:
                         break
                     budget.add(*line_rows)
                     shown.append(dl)
-                observations.extend(_observations(self.name, file, shown))
+                observations.extend(hunk_observations(self.name, file, shown))
                 budget.add(
                     f"[hunk cut short after {len(shown)} of {len(hunk.lines)} lines; "
                     "use read_file for the rest]"
@@ -135,7 +135,13 @@ def _hint(files: list[FileDiff], stop: tuple[int, int] | None) -> str:
     )
 
 
-def _observations(tool: str, file: FileDiff, lines: list[DiffLine]) -> list[Observation]:
+def file_observations(file: FileDiff, tool: str = GetDiff.name) -> list[Observation]:
+    """Observations for every hunk of a file, for diff text shown in full (such as an opening
+    message rendered with `render_file`)."""
+    return [o for hunk in file.hunks for o in hunk_observations(tool, file, hunk.lines)]
+
+
+def hunk_observations(tool: str, file: FileDiff, lines: list[DiffLine]) -> list[Observation]:
     """What a shown hunk (or part of one) lets the model cite, on each side of the diff."""
     observations: list[Observation] = []
     new = [dl for dl in lines if dl.new_lineno is not None]  # unchanged and added lines

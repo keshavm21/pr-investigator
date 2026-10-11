@@ -81,6 +81,10 @@ class Finding(BaseModel):
     anchor_in_diff: bool = Field(
         description="True if every anchored line is a commentable line of the PR diff."
     )
+    evidence: list[Evidence] = Field(
+        default_factory=list,
+        description="Verified evidence with system-extracted snippets (agentic reviewers only)",
+    )
 
 
 class PullRequestRef(BaseModel):

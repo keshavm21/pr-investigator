@@ -1,2 +1,3 @@
 """Agentic investigation (Phase 2): the observation ledger, the evidence check, the bounded agent
-loop and its submit_verdict terminal tool."""
+loop, the planner, and the agentic reviewers A2 (planner + one investigation per suspect) and
+A1 (one loop over the whole PR)."""
