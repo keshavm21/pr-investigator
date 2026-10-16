@@ -13,8 +13,9 @@ the review comment.
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pr_investigator.agent.ledger import ObservationLedger
 from pr_investigator.diff import ParsedDiff
@@ -28,8 +29,16 @@ MAX_EVIDENCE_ITEMS = 10
 MAX_EVIDENCE_SPAN = 60
 
 
+def lowercase(value: Any) -> Any:
+    """Enum values in model-written arguments are matched case-insensitively ('defECT_site' is
+    'defect_site'). Only the spelling is normalized: an unknown value is still rejected."""
+    return value.strip().lower() if isinstance(value, str) else value
+
+
 class EvidenceRef(BaseModel):
     """One evidence item as the model submits it."""
+
+    _role_case = field_validator("role", mode="before")(lowercase)
 
     observation_id: str = Field(description="An observation id you were shown, such as 'O3'.")
     role: EvidenceRole = Field(
@@ -107,7 +116,13 @@ def _verify(
         return None, f"{ref.role.value} evidence must cite lines a tool showed, not a search"
     assert observation.start_line is not None and observation.end_line is not None
     if ref.path is None or ref.start_line is None or ref.end_line is None:
-        return None, "give path, start_line and end_line"
+        fields = (("path", ref.path), ("start_line", ref.start_line), ("end_line", ref.end_line))
+        missing = [name for name, value in fields if value is None]
+        verb = "is" if len(missing) == 1 else "are"
+        return None, (
+            f"{' and '.join(missing)} {verb} missing; "
+            "line evidence needs path, start_line and end_line"
+        )
     try:
         path = str(validate_relative_path(ref.path))
     except ToolError as exc:

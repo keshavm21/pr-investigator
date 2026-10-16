@@ -8,9 +8,9 @@ shows, which becomes its anchor. Anything that isn't an accepted verdict ends in
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from pr_investigator.agent.evidence import EvidenceRef, check_evidence
+from pr_investigator.agent.evidence import EvidenceRef, check_evidence, lowercase
 from pr_investigator.agent.ledger import ObservationLedger
 from pr_investigator.agent.loop import LoopResult, Submission, validation_problems
 from pr_investigator.diff import ParsedDiff
@@ -27,6 +27,10 @@ class VerdictStatus(StrEnum):
 
 class Verdict(BaseModel):
     """The arguments of submit_verdict."""
+
+    _enum_case = field_validator("status", "category", "severity", "confidence", mode="before")(
+        lowercase
+    )
 
     status: VerdictStatus = Field(
         description=(

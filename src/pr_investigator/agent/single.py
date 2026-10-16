@@ -8,9 +8,9 @@ the way B0 renders it, with the diff lines recorded in the ledger so they can be
 import time
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from pr_investigator.agent.evidence import EvidenceRef, check_evidence
+from pr_investigator.agent.evidence import EvidenceRef, check_evidence, lowercase
 from pr_investigator.agent.ledger import ObservationLedger, printable
 from pr_investigator.agent.loop import PROMPT_NAME as LOOP_PROMPT_NAME
 from pr_investigator.agent.loop import PROMPT_VERSION as LOOP_PROMPT_VERSION
@@ -35,11 +35,13 @@ from pr_investigator.trace import Trace, errors_traced
 from pr_investigator.workspace import Workspace
 
 STAGE = "single_agent"
-PROMPT_NAME, PROMPT_VERSION = "single_agent", 1
+PROMPT_NAME, PROMPT_VERSION = "single_agent", 2
 REVIEWER = "a1"
 
 
 class ReportedFinding(BaseModel):
+    _enum_case = field_validator("category", "severity", "confidence", mode="before")(lowercase)
+
     claim: str = Field(description="One sentence: the problem.")
     explanation: str = Field(description="What goes wrong, when, and the impact.")
     category: Category

@@ -173,8 +173,8 @@ def test_unknown_observation_is_rejected(inv: Investigation) -> None:
         ("app/service.py", 38, 41, "lines 38-41 are outside what this observation showed (40-50)"),
         ("app/service.py", 49, 51, "outside what this observation showed"),
         ("app/service.py", 45, 44, "start_line must be at least 1 and no greater than end_line"),
-        ("app/service.py", None, 44, "give path, start_line and end_line"),
-        (None, 44, 45, "give path, start_line and end_line"),
+        ("app/service.py", None, 44, "start_line is missing; line evidence needs path"),
+        (None, None, 45, "path and start_line are missing"),
     ],
 )
 def test_line_evidence_must_match_the_observation(

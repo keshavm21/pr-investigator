@@ -38,7 +38,7 @@ from pr_investigator.trace import Trace, errors_traced
 from pr_investigator.workspace import Workspace
 
 STAGE = "investigate"
-PROMPT_NAME, PROMPT_VERSION = "investigator", 1
+PROMPT_NAME, PROMPT_VERSION = "investigator", 2
 REVIEWER = "a2"
 
 

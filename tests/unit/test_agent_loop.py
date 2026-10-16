@@ -468,3 +468,30 @@ def test_prompt_sections_parse_the_loop_messages() -> None:
         "not_run_limit",
         "not_run_ended",
     }
+
+
+async def test_enum_values_are_matched_case_insensitively_but_never_invented(run: Run) -> None:
+    # From the live smoke review: the model wrote role "defECT_site".
+    odd_case = verdict("Confirmed", cite("O1", "defECT_site"))
+    odd_case["severity"] = "MEDIUM"
+    result, _ = await run([reply(submit("s", odd_case))], max_turns=1)
+    assert result.cause is StopCause.SUBMITTED and result.submission is not None
+    assert result.submission.evidence[0].role is EvidenceRole.DEFECT_SITE
+
+    unknown = verdict("confirmed", cite("O1", "bug_site"))
+    result, _ = await run([reply(submit("s", unknown))], max_turns=1)
+    (errors,) = result.rejections
+    assert errors[0].startswith("evidence.0.role: Input should be 'defect_site'")
+
+
+async def test_a_missing_line_field_is_named_exactly(run: Run) -> None:
+    # From the live smoke review: the model sent end_line without start_line.
+    item = cite("O1")
+    del item["start_line"]
+    result, _ = await run([reply(submit("s", verdict("confirmed", item)))], max_turns=1)
+    assert result.rejections == [
+        [
+            "evidence 1 (O1): start_line is missing; "
+            "line evidence needs path, start_line and end_line"
+        ]
+    ]
