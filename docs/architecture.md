@@ -580,7 +580,6 @@ As of Phase 2. Modules are flat until they grow. Later phases add `indexing/`, `
 
 ```text
 pr-investigator/
-├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml            # uv-managed; ruff, mypy and pytest configuration
 ├── uv.lock

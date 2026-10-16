@@ -32,8 +32,8 @@ def broken_install_message() -> str:
             f"These .pth files have the macOS 'hidden' flag, and Python 3.13+ skips hidden .pth "
             f"files: {', '.join(hidden)}.",
             "iCloud Drive sets that flag on everything inside dot-folders such as .venv when the "
-            "project lives in a synced folder (Desktop or Documents). See 'macOS and iCloud' in "
-            "CLAUDE.md.",
+            "project lives in a synced folder (Desktop or Documents). See 'Troubleshooting' in "
+            "README.md.",
         ]
     else:
         lines.append("Run `uv sync` to install the project, then try again.")

@@ -34,7 +34,18 @@ uv run mypy
 
 ## Troubleshooting
 
-**`ModuleNotFoundError: No module named 'pr_investigator'` on macOS.** If the repository is inside an iCloud-synced folder (Desktop or Documents), iCloud marks files in `.venv` as hidden, and Python 3.13+ ignores hidden `.pth` files, which breaks the editable install. Move the repository elsewhere, or keep the environment in `venv.nosync/` with `.venv` as a symlink to it (see "macOS and iCloud" in [CLAUDE.md](CLAUDE.md)).
+### `ModuleNotFoundError: No module named 'pr_investigator'` on macOS
+
+Inside an iCloud-synced folder (Desktop or Documents), iCloud Drive sets the macOS `hidden` flag on everything in dot-folders such as `.venv`. Python 3.13+ skips hidden `.pth` files, and the editable install depends on one, so the package can't be imported. The test suite stops with this explanation when it detects the problem.
+
+- **Best fix:** keep the checkout outside synced folders (for example in `~/Developer`), then recreate the environment, since a virtualenv stores absolute paths: `rm -rf .venv && uv sync`.
+- **If the checkout must stay in a synced folder:** keep the environment in `venv.nosync/` (no leading dot, so it isn't synced or hidden) and make `.venv` a symlink to it:
+
+  ```bash
+  rm -rf .venv
+  UV_PROJECT_ENVIRONMENT=venv.nosync uv sync
+  ln -s venv.nosync .venv
+  ```
 
 ## Documentation
 
