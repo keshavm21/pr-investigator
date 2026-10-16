@@ -15,7 +15,14 @@ from pr_investigator.agent.ledger import ObservationLedger, printable
 from pr_investigator.agent.loop import PROMPT_NAME as LOOP_PROMPT_NAME
 from pr_investigator.agent.loop import PROMPT_VERSION as LOOP_PROMPT_VERSION
 from pr_investigator.agent.loop import AgentLoop, LoopConfig, Submission, validation_problems
-from pr_investigator.agent.models import AgentBudget, AgentReview, Findings, LoopRecord
+from pr_investigator.agent.models import (
+    AgentBudget,
+    AgentReview,
+    Findings,
+    LoopRecord,
+    emit_run_end,
+    emit_run_start,
+)
 from pr_investigator.diff import ParsedDiff
 from pr_investigator.domain import Anchor, Category, Confidence, Evidence, ReviewTarget, Severity
 from pr_investigator.llm.client import LLMClient
@@ -24,6 +31,7 @@ from pr_investigator.llm.types import Effort, ToolSpec
 from pr_investigator.review.baseline import Coverage, render_diff, untrusted
 from pr_investigator.tools import Observation
 from pr_investigator.tools.get_diff import file_observations
+from pr_investigator.trace import Trace, errors_traced
 from pr_investigator.workspace import Workspace
 
 STAGE = "single_agent"
@@ -116,6 +124,11 @@ def single_agent_prompt() -> Prompt:
     return load_prompt(PROMPT_NAME, PROMPT_VERSION)
 
 
+def a1_prompts() -> tuple[Prompt, ...]:
+    """Every prompt A1 uses, for run records."""
+    return (single_agent_prompt(), load_prompt(LOOP_PROMPT_NAME, LOOP_PROMPT_VERSION))
+
+
 async def review_a1(
     target: ReviewTarget,
     workspace: Workspace,
@@ -124,8 +137,28 @@ async def review_a1(
     *,
     budget: AgentBudget | None = None,
     sample: int = 0,
+    trace: Trace | None = None,
 ) -> AgentReview:
     budget = budget or AgentBudget()
+    trace = trace or Trace()
+    prompts = a1_prompts()
+    emit_run_start(trace, REVIEWER, target, client.provider, client.model, budget, prompts)
+    with errors_traced(trace):
+        review = await _review_a1(target, workspace, diff, client, budget, sample, trace, prompts)
+    emit_run_end(trace, review)
+    return review
+
+
+async def _review_a1(
+    target: ReviewTarget,
+    workspace: Workspace,
+    diff: ParsedDiff,
+    client: LLMClient,
+    budget: AgentBudget,
+    sample: int,
+    trace: Trace,
+    prompts: tuple[Prompt, ...],
+) -> AgentReview:
     started = time.monotonic()
     config = LoopConfig(
         stage=STAGE,
@@ -137,9 +170,8 @@ async def review_a1(
         sample=sample,
     )
     terminal = ReportFindings(workspace, diff, max_findings=budget.max_findings)
-    loop = AgentLoop(client, workspace, diff, terminal, config)
+    loop = AgentLoop(client, workspace, diff, terminal, config, trace=trace.scoped("review"))
     opening, coverage = single_agent_opening(loop, target, budget)
-    prompts = (single_agent_prompt(), load_prompt(LOOP_PROMPT_NAME, LOOP_PROMPT_VERSION))
     review = AgentReview(
         reviewer=REVIEWER,
         target=target,

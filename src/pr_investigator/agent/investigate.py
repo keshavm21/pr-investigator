@@ -17,6 +17,8 @@ from pr_investigator.agent.models import (
     Findings,
     Investigation,
     LoopRecord,
+    emit_run_end,
+    emit_run_start,
 )
 from pr_investigator.agent.planner import Suspect, make_plan, planner_prompt
 from pr_investigator.agent.verdict import (
@@ -32,6 +34,7 @@ from pr_investigator.llm.prompts import Prompt, load_prompt
 from pr_investigator.llm.types import Effort
 from pr_investigator.review.baseline import untrusted
 from pr_investigator.tools import ToolContext, ToolResult, run_tool
+from pr_investigator.trace import Trace, errors_traced
 from pr_investigator.workspace import Workspace
 
 STAGE = "investigate"
@@ -43,6 +46,15 @@ def investigator_prompt() -> Prompt:
     return load_prompt(PROMPT_NAME, PROMPT_VERSION)
 
 
+def a2_prompts() -> tuple[Prompt, ...]:
+    """Every prompt A2 uses, for run records."""
+    return (
+        planner_prompt(),
+        investigator_prompt(),
+        load_prompt(LOOP_PROMPT_NAME, LOOP_PROMPT_VERSION),
+    )
+
+
 async def review_a2(
     target: ReviewTarget,
     workspace: Workspace,
@@ -52,8 +64,31 @@ async def review_a2(
     max_diff_chars: int,
     budget: AgentBudget | None = None,
     sample: int = 0,
+    trace: Trace | None = None,
 ) -> AgentReview:
     budget = budget or AgentBudget()
+    trace = trace or Trace()
+    prompts = a2_prompts()
+    emit_run_start(trace, REVIEWER, target, client.provider, client.model, budget, prompts)
+    with errors_traced(trace):
+        review = await _review_a2(
+            target, workspace, diff, client, max_diff_chars, budget, sample, trace, prompts
+        )
+    emit_run_end(trace, review)
+    return review
+
+
+async def _review_a2(
+    target: ReviewTarget,
+    workspace: Workspace,
+    diff: ParsedDiff,
+    client: LLMClient,
+    max_diff_chars: int,
+    budget: AgentBudget,
+    sample: int,
+    trace: Trace,
+    prompts: tuple[Prompt, ...],
+) -> AgentReview:
     started = time.monotonic()
     plan = await make_plan(
         target,
@@ -63,14 +98,34 @@ async def review_a2(
         max_suspects=budget.max_suspects,
         sample=sample,
     )
+    trace.emit(
+        "plan",
+        summary=plan.summary,
+        suspects=plan.suspects,
+        dropped=plan.dropped,
+        coverage=plan.coverage,
+        usage=plan.usage,
+        attempts=plan.attempts,
+        cached=plan.cached,
+    )
     usage = plan.usage
     requests = plan.attempts
     cached_requests = plan.attempts if plan.cached else 0
     findings = Findings()
     investigations: list[Investigation] = []
     for suspect in plan.suspects:  # sequential by design: the rate limit sets the pace
+        scoped = trace.scoped(suspect.id)
+        scoped.emit("investigation_start", suspect=suspect)
         investigation = await investigate(
-            suspect, plan.summary, target, workspace, diff, client, budget=budget, sample=sample
+            suspect,
+            plan.summary,
+            target,
+            workspace,
+            diff,
+            client,
+            budget=budget,
+            sample=sample,
+            trace=scoped,
         )
         verdict = investigation.verdict
         if investigation.status is VerdictStatus.CONFIRMED and verdict is not None:
@@ -78,16 +133,18 @@ async def review_a2(
             investigation = investigation.model_copy(
                 update={"finding_id": finding_id, "duplicate_of": duplicate_of}
             )
+        scoped.emit(
+            "investigation_end",
+            status=investigation.status,
+            claim=verdict.verdict.claim if verdict is not None else None,
+            finding_id=investigation.finding_id,
+            duplicate_of=investigation.duplicate_of,
+        )
         investigations.append(investigation)
         usage = usage + investigation.loop.usage
         requests += investigation.loop.turns
         cached_requests += investigation.loop.cached_turns
 
-    prompts = (
-        planner_prompt(),
-        investigator_prompt(),
-        load_prompt(LOOP_PROMPT_NAME, LOOP_PROMPT_VERSION),
-    )
     return AgentReview(
         reviewer=REVIEWER,
         target=target,
@@ -118,6 +175,7 @@ async def investigate(
     *,
     budget: AgentBudget,
     sample: int = 0,
+    trace: Trace | None = None,
 ) -> Investigation:
     config = LoopConfig(
         stage=STAGE,
@@ -128,7 +186,7 @@ async def investigate(
         effort=Effort.MEDIUM,
         sample=sample,
     )
-    loop = AgentLoop(client, workspace, diff, SubmitVerdict(workspace, diff), config)
+    loop = AgentLoop(client, workspace, diff, SubmitVerdict(workspace, diff), config, trace=trace)
     opening = investigation_opening(loop, suspect, summary, budget)
     result = await loop.run(investigator_prompt().text, opening)
     return Investigation(

@@ -22,8 +22,9 @@ from pr_investigator.github import GitHubClient, parse_pr_reference
 from pr_investigator.llm.client import LLMClient, ensure_data_allowed
 from pr_investigator.llm.factory import build_client
 from pr_investigator.llm.guards import RequestBudget
-from pr_investigator.review.baseline import review_baseline
-from pr_investigator.review.report import render_markdown, write_run
+from pr_investigator.review.report import create_run_dir, render_markdown, save_run
+from pr_investigator.review.reviewers import AnyReview, Reviewer, run_reviewer
+from pr_investigator.trace import TRACE_FILE, Trace, printable_lines, read_trace, render_trace
 from pr_investigator.workspace import Workspace, run_git
 
 app = typer.Typer(help="PR Investigator: an evidence-driven AI reviewer for GitHub PRs.")
@@ -72,28 +73,92 @@ def review(
     ] = DataClass.PRIVATE,
     provider: ProviderOpt = None,
     model: ModelOpt = None,
+    reviewer: Annotated[
+        Reviewer,
+        typer.Option(
+            "--reviewer",
+            help="b0: one call on the diff. a2: planner, then one investigation per suspect. "
+            "a1: one agent loop over the whole PR.",
+        ),
+    ] = Reviewer.B0,
+    max_requests: Annotated[
+        int, typer.Option(min=1, help="Cap on real provider requests (cache hits are free).")
+    ] = 30,
     as_json: Annotated[bool, typer.Option("--json", help="Print the result as JSON.")] = False,
 ) -> None:
-    """Review a pull request with the one-call baseline reviewer (B0)."""
+    """Review a pull request: B0 by default, or the agentic reviewers A2 and A1."""
+    run_dir: Path | None = None
     try:
         settings = _settings(provider, model)
-        client = build_client(settings)
+        client = build_client(settings, budget=RequestBudget(max_requests))
         review_target, workspace = _ingest(
             target, base, head, title, description, data_class, client, settings
         )
+        run_dir = create_run_dir(settings.runs_dir)
         result = asyncio.run(
-            review_baseline(
-                review_target, workspace.diff(), client, max_diff_chars=settings.max_diff_chars
-            )
+            _run_reviewer(reviewer, review_target, workspace, client, settings, run_dir)
         )
-        run_dir = write_run(result, settings.runs_dir)
+        save_run(result, run_dir)
     except PRIError as exc:
+        if run_dir is not None and (run_dir / TRACE_FILE).is_file():
+            err.print(f"[dim]Partial trace: pri show {run_dir}[/]")
         raise _fail(exc) from exc
     if as_json:
         console.print_json(result.model_dump_json())
     else:
         console.print(Markdown(render_markdown(result)))
         console.print(f"\n[dim]Saved to {run_dir}[/]")
+        if reviewer is not Reviewer.B0:
+            console.print(f"[dim]Timeline: pri show {run_dir}[/]")
+
+
+async def _run_reviewer(
+    reviewer: Reviewer,
+    target: ReviewTarget,
+    workspace: Workspace,
+    client: LLMClient,
+    settings: Settings,
+    run_dir: Path,
+) -> AnyReview:
+    with Trace(run_dir / TRACE_FILE if reviewer.agentic else None) as trace:
+        return await run_reviewer(
+            reviewer,
+            target,
+            workspace,
+            workspace.diff(),
+            client,
+            max_diff_chars=settings.max_diff_chars,
+            trace=trace,
+        )
+
+
+@app.command()
+def show(
+    run: Annotated[str, typer.Argument(help="A run id, run directory or trace file.")],
+    full: Annotated[
+        bool, typer.Option("--full", help="Include model text and complete tool output.")
+    ] = False,
+) -> None:
+    """Show what a review did: its plan, each investigation's turns, and its findings."""
+    try:
+        path = _resolve_run(run, _settings())
+    except PRIError as exc:
+        raise _fail(exc) from exc
+    trace = path if path.is_file() else path / TRACE_FILE
+    if trace.is_file():
+        typer.echo(render_trace(read_trace(trace), full=full), nl=False)
+    elif (path / "review.md").is_file():  # B0 runs have no trace
+        text = (path / "review.md").read_text(encoding="utf-8")
+        typer.echo("\n".join(printable_lines([text])))
+    else:
+        raise _fail(PRIError(f"{path} has no trace or review"))
+
+
+def _resolve_run(run: str, settings: Settings) -> Path:
+    for candidate in (Path(run).expanduser(), settings.runs_dir / run):
+        if candidate.exists():
+            return candidate
+    raise PRIError(f"no run, run directory or trace found for {run!r}")
 
 
 def _ingest(
@@ -199,13 +264,22 @@ def eval_run(
     fixtures_dir: FixturesOpt = Path("evals/fixtures"),
     provider: ProviderOpt = None,
     model: ModelOpt = None,
+    reviewer: Annotated[
+        Reviewer, typer.Option("--reviewer", help="Which reviewer to evaluate: b0, a2 or a1.")
+    ] = Reviewer.B0,
+    traces: Annotated[
+        bool, typer.Option(help="Write a trace per case to <results>/traces (a1 and a2 only).")
+    ] = True,
 ) -> None:
-    """Run the baseline reviewer over the evaluation cases and score it."""
+    """Run a reviewer over the evaluation cases and score it."""
     try:
         settings = _settings(provider, model)
         cases = load_cases(cases_dir, only=case)
         budget = RequestBudget(max_requests)
         client = build_client(settings, budget=budget)
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        safe_model = client.model.replace("/", "_")
+        out_dir = output or Path("evals/results") / f"{stamp}-{reviewer.value}-{safe_model}"
         info, scores, summary = asyncio.run(
             run_eval(
                 cases,
@@ -215,13 +289,13 @@ def eval_run(
                 samples=samples,
                 max_diff_chars=settings.max_diff_chars,
                 progress=lambda message: console.print(f"[dim]{message}[/]"),
+                reviewer=reviewer,
+                traces_dir=out_dir / "traces" if traces else None,
             )
         )
     except PRIError as exc:
         raise _fail(exc) from exc
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    safe_model = info.model.replace("/", "_")
-    out_dir = output or Path("evals/results") / f"{stamp}-b0-{safe_model}"
+    info.provider_requests = budget.used
     write_results(out_dir, info, scores, summary)
     console.print(Markdown(render_summary(info, scores, summary)))
     console.print(f"[dim]{budget.used} real provider requests. Results in {out_dir}[/]")

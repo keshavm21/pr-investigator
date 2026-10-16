@@ -3,6 +3,10 @@
 Each case is materialized as a real git repository and reviewed through the same ingestion
 path as a local PR. Repeated samples of a case use distinct cache entries (`sample`), so
 re-running an eval replays every sample from the cache instead of spending quota.
+
+Agentic reviewers write one trace per case and sample (`traces/<case>-s<sample>.jsonl`). The run
+record names the reviewer, its prompts and budget, and the commit of this checkout, so results
+can be tied to the code that produced them.
 """
 
 import json
@@ -11,9 +15,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pr_investigator import ingest
+from pr_investigator.agent.models import AgentBudget, AgentReview
 from pr_investigator.domain import DataClass, ReviewTarget, Side
 from pr_investigator.errors import EvalCaseError, PRIError
 from pr_investigator.evaluation.cases import EvalCase
@@ -25,11 +30,12 @@ from pr_investigator.evaluation.materialize import (
     Region,
     materialize,
 )
-from pr_investigator.evaluation.metrics import CaseScore, Summary, summarize
+from pr_investigator.evaluation.metrics import AgentStats, CaseScore, Summary, summarize
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.types import LLMQuotaExhaustedError, RequestBudgetExceededError
-from pr_investigator.review.baseline import PROMPT_NAME, PROMPT_VERSION, review_baseline
-from pr_investigator.workspace import Workspace
+from pr_investigator.review.reviewers import AnyReview, Reviewer, reviewer_prompts, run_reviewer
+from pr_investigator.trace import Trace
+from pr_investigator.workspace import Workspace, run_git
 
 Progress = Callable[[str], None]
 
@@ -42,9 +48,28 @@ class EvalRunInfo(BaseModel):
     judge: str
     samples: int
     tolerance: int
-    review_prompt: str
+    review_prompt: str  # prompt ids, comma-separated
     cases: list[str]
     stopped_early: str | None = None
+    prompts: dict[str, str] = Field(default_factory=dict, description="prompt id -> sha256")
+    budget: AgentBudget | None = None  # agentic reviewers only
+    code_commit: str | None = None  # this checkout of PR Investigator
+    code_dirty: bool | None = None  # uncommitted changes when the run started
+    provider_requests: int | None = None  # real provider calls, retries and judge included
+
+
+def code_version() -> tuple[str | None, bool | None]:
+    """The commit of this PR Investigator checkout, and whether it has uncommitted changes.
+    (None, None) when the package isn't running from a git checkout."""
+    root = Path(__file__).resolve().parents[3]
+    if not (root / ".git").exists() or not (root / "pyproject.toml").is_file():
+        return None, None
+    try:
+        commit = run_git(["rev-parse", "HEAD"], cwd=root).decode().strip()
+        dirty = bool(run_git(["status", "--porcelain"], cwd=root).strip())
+    except PRIError:
+        return None, None
+    return commit, dirty
 
 
 def prepare_case(
@@ -88,18 +113,31 @@ async def run_eval(
     max_diff_chars: int,
     tolerance: int = DEFAULT_TOLERANCE,
     progress: Progress | None = None,
+    reviewer: Reviewer = Reviewer.B0,
+    budget: AgentBudget | None = None,
+    traces_dir: Path | None = None,
 ) -> tuple[EvalRunInfo, list[CaseScore], Summary]:
     say = progress or (lambda _message: None)
+    budget = (budget or AgentBudget()) if reviewer.agentic else None
+    prompts = reviewer_prompts(reviewer)
+    commit, dirty = code_version()
     info = EvalRunInfo(
+        reviewer=reviewer.value,
         started_at=datetime.now(UTC).isoformat(timespec="seconds"),
         provider=client.provider,
         model=client.model,
         judge=f"{judge_client.provider}/{judge_client.model}" if judge_client else "location-only",
         samples=samples,
         tolerance=tolerance,
-        review_prompt=f"{PROMPT_NAME}.v{PROMPT_VERSION}",
+        review_prompt=", ".join(p.id for p in prompts),
         cases=[c.id for c in cases],
+        prompts={p.id: p.sha256 for p in prompts},
+        budget=budget,
+        code_commit=commit,
+        code_dirty=dirty,
     )
+    if traces_dir is not None and reviewer.agentic:
+        traces_dir.mkdir(parents=True, exist_ok=True)
     scores: list[CaseScore] = []
     with tempfile.TemporaryDirectory(prefix="pri-eval-") as tmp:
         work_dir = Path(tmp)
@@ -120,10 +158,23 @@ async def run_eval(
                     sample=sample,
                     expected_total=len(case.expected),
                 )
+                trace_path = None
+                if traces_dir is not None and reviewer.agentic:
+                    trace_path = traces_dir / f"{case.id}-s{sample}.jsonl"
                 try:
-                    result = await review_baseline(
-                        target, diff, client, max_diff_chars=max_diff_chars, sample=sample
-                    )
+                    with Trace(trace_path) as trace:
+                        result = await run_reviewer(
+                            reviewer,
+                            target,
+                            workspace,
+                            diff,
+                            client,
+                            max_diff_chars=max_diff_chars,
+                            budget=budget,
+                            sample=sample,
+                            trace=trace,
+                        )
+                    requests, cached_requests = request_counts(result)
                     matches, judge_usage = await match(
                         result.findings,
                         mcase,
@@ -138,14 +189,19 @@ async def run_eval(
                             "decoy_hits": decoy_hits(result.findings, mcase, tolerance),
                             "review_usage": result.usage,
                             "judge_usage": judge_usage,
-                            "cached": result.cached,
+                            "cached": requests > 0 and cached_requests == requests,
+                            "requests": requests,
+                            "cached_requests": cached_requests,
+                            "agent": (
+                                AgentStats.of(result) if isinstance(result, AgentReview) else None
+                            ),
                             "duration_seconds": result.duration_seconds,
                         }
                     )
                     say(
                         f"{case.id} [sample {sample}]: {len(result.findings)} findings, "
                         f"{len(matches)}/{len(case.expected)} expected matched"
-                        + (" (cached)" if result.cached else "")
+                        + (" (cached)" if score.cached else f", {requests} requests")
                     )
                 except (RequestBudgetExceededError, LLMQuotaExhaustedError) as exc:
                     score.error = str(exc)
@@ -158,6 +214,13 @@ async def run_eval(
                 if info.stopped_early:
                     break
     return info, scores, summarize(scores)
+
+
+def request_counts(result: AnyReview) -> tuple[int, int]:
+    """(model requests, of which served from the cache) for one review."""
+    if isinstance(result, AgentReview):
+        return result.requests, result.cached_requests
+    return result.attempts, result.attempts if result.cached else 0
 
 
 def write_results(
@@ -189,6 +252,16 @@ def render_summary(info: EvalRunInfo, scores: list[CaseScore], summary: Summary)
         f"- Cases: {len(info.cases)}; samples per case: {info.samples}; "
         f"location tolerance: ±{info.tolerance} lines",
     ]
+    if info.code_commit:
+        dirty = " with uncommitted changes" if info.code_dirty else ""
+        lines.append(f"- Code: commit `{info.code_commit[:12]}`{dirty}")
+    if info.budget is not None:
+        b = info.budget
+        lines.append(
+            f"- Budget: {b.max_suspects} suspects, {b.investigation_turns} turns per "
+            f"investigation, {b.single_agent_turns} turns for A1, {b.max_tool_calls_per_turn} "
+            f"tool calls per turn, {b.max_tool_output_chars} characters per tool result"
+        )
     if info.stopped_early:
         lines.append(f"- **Stopped early:** {info.stopped_early}")
     lines += [
@@ -208,19 +281,59 @@ def render_summary(info: EvalRunInfo, scores: list[CaseScore], summary: Summary)
         f"| Runs (failed / served from cache) | {summary.runs} "
         f"({summary.failed_runs} / {summary.cached_runs}) |",
         f"| Tokens (in / out) | {summary.input_tokens} / {summary.output_tokens} |",
+        f"| Review requests (from cache) | {summary.requests} ({summary.cached_requests}) |",
+        f"| Requests per run (mean / max) | "
+        f"{'n/a' if summary.requests_per_run is None else f'{summary.requests_per_run:.1f}'} / "
+        f"{summary.max_requests_per_run} |",
+    ]
+    if info.provider_requests is not None:
+        lines.append(
+            f"| Real provider requests (retries and judge included) | {info.provider_requests} |"
+        )
+    lines += [
         "",
         "TP counts include partial matches. Unmatched findings count as false positives until a "
         "human adjudicates them.",
         "",
+    ]
+    if summary.agent is not None:
+        lines += _agent_section(summary)
+    lines += [
         "## Per case",
         "",
-        "| Case | Kind | Sample | Findings | Matched | Decoy hits | Error |",
-        "|---|---|---|---|---|---|---|",
+        "| Case | Kind | Sample | Findings | Matched | Decoy hits | Requests | Error |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for s in scores:
         matched = f"{s.true_positives}/{s.expected_total}" if s.expected_total else "-"
+        requests = f"{s.requests}" + (" (cached)" if s.cached else "")
         lines.append(
             f"| {s.case_id} | {s.kind.value} | {s.sample} | {len(s.findings)} | {matched} | "
-            f"{len(s.decoy_hits) or '-'} | {s.error or ''} |"
+            f"{len(s.decoy_hits) or '-'} | {requests} | {s.error or ''} |"
         )
     return "\n".join(lines) + "\n"
+
+
+def _agent_section(summary: Summary) -> list[str]:
+    agent = summary.agent
+    assert agent is not None
+
+    def counts(values: dict[str, int]) -> str:
+        return ", ".join(f"{name} {count}" for name, count in sorted(values.items())) or "none"
+
+    rate = summary.verified_evidence_rate
+    verified = "n/a" if rate is None else f"{rate:.0%}"
+    return [
+        "## Investigations",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Reported findings with verified evidence | {verified} |",
+        f"| Suspects investigated (dropped) | {agent.suspects} ({agent.dropped_suspects}) |",
+        f"| Outcomes | {counts(agent.outcomes)} |",
+        f"| Why loops stopped | {counts(agent.stop_causes)} |",
+        f"| Turns / tool calls | {agent.turns} / {agent.tool_calls} |",
+        f"| Submissions rejected by the evidence check | {agent.rejections} |",
+        f"| Duplicate confirmations | {agent.duplicates} |",
+        "",
+    ]

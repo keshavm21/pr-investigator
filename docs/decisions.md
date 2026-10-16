@@ -8,7 +8,7 @@
 >
 > When a decision changes, update its row and the affected docs.
 >
-> Last updated: 2026-10-06. **There is no budget for paid API calls:** development and evaluation use free tiers only.
+> Last updated: 2026-10-12. **There is no budget for paid API calls:** development and evaluation use free tiers only.
 
 ## Accepted
 
@@ -20,10 +20,10 @@
 | D21 | **Evaluation budget is $0.** Evals are sized to free-tier quotas, not dollars. | Response caching, request caps, a small suite and few repetitions ([evaluation.md](evaluation.md) §2.7). Revisit if a budget appears. |
 | D23 | **Project licence: MIT** (`LICENSE`, declared in `pyproject.toml`) | Apache-2.0 was the alternative: it adds an explicit patent grant. MIT is simpler. |
 | D4 | **Our own small, bounded agent loop**, written against the internal `LLMClient`. No LangGraph, LangChain or other agent framework. | The investigation workflow is small enough to implement clearly as a bounded stateful loop, and the agentic behaviour itself, not framework usage, is the focus of the project. Revisit only if the workflow becomes complex enough to justify a framework. |
-| D5 | **A planner turns the PR into suspected problems, then one bounded investigation runs per suspect (reviewer A2).** The single-agent version (A1) stays available for comparison. An independent verifier follows in Phase 4. | A single agent loop is simpler and cheaper. The eval compares the two on the same cases and model. |
+| D5 | **A planner turns the PR into suspected problems, then one bounded investigation runs per suspect (reviewer A2).** The single-agent version (A1) stays available for comparison. An independent verifier follows in Phase 4. | A single agent loop is simpler and cheaper. The eval compares the two on the same cases and model. `b0` stays the default reviewer for `pri review` and `pri eval run` until the Phase 2 eval shows A2 is better. |
 | D6 | **Typed, read-only tools with no shell.** | A shell is more flexible but weaker for security and auditability, and it can't support the evidence ledger. |
 | D24 | **Our own small LLM interface**: `LLMClient`, normalized request and response types, per-adapter capability flags, plain-module adapters. No LiteLLM. | LiteLLM and PydanticAI add more than they save for one or two providers, and PydanticAI would also take over orchestration (D4). |
-| D25 | **Investigation budget: at most 4 suspects per PR and 6 model turns per suspect.** | Sized to the free tier of `gemini-3.5-flash-lite`, which AI Studio shows for this project as 15 requests/min, 250K tokens/min and 500 requests/day (checked 2026-10-06). The worst case is about 26 requests per PR, so one 10-case eval run stays well under the daily limit. |
+| D25 | **Investigation budget: at most 4 suspects per PR and 6 model turns per suspect.** Also accepted and enforced in code: 12 turns for A1, at most 3 tool calls per turn, about 4,000 characters per tool result, medium effort on every call (as for B0), investigations one at a time, and live runs at 10 requests/min (`PRI_LLM_REQUESTS_PER_MINUTE=10`). | Sized to the free tier of `gemini-3.5-flash-lite`, which AI Studio shows for this project as 15 requests/min, 250K tokens/min and 500 requests/day (checked 2026-10-06). The worst case is about 26 requests per PR, so one 10-case eval run stays well under the daily limit. |
 
 ## Architecture
 

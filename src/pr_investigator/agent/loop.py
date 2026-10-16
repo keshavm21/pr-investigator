@@ -51,6 +51,7 @@ from pr_investigator.tools import (
     run_tool,
     tool_specs,
 )
+from pr_investigator.trace import Trace
 from pr_investigator.workspace import Workspace
 
 PROMPT_NAME, PROMPT_VERSION = "agent_loop", 1
@@ -133,6 +134,7 @@ class AgentLoop[T]:
         config: LoopConfig,
         *,
         tools: tuple[Tool, ...] = READ_ONLY_TOOLS,
+        trace: Trace | None = None,
     ) -> None:
         if terminal.spec.name in {t.name for t in tools}:
             raise ValueError(f"terminal tool {terminal.spec.name!r} clashes with a repository tool")
@@ -140,6 +142,7 @@ class AgentLoop[T]:
         self.terminal = terminal
         self.config = config
         self.tools = tools
+        self.trace = trace or Trace()
         self.ctx = ToolContext(
             workspace=workspace, diff=diff, max_output_chars=config.max_tool_output_chars
         )
@@ -162,6 +165,7 @@ class AgentLoop[T]:
         if self.messages:
             raise RuntimeError("an AgentLoop runs only once")
         self.messages.append(Message.user(opening))
+        self.trace.emit("opening", text=opening)
         specs = [*tool_specs(self.tools), self.terminal.spec]
         # A note owed to the model about its previous reply: (prompt section, detail).
         reminder: tuple[str, str] | None = None
@@ -175,6 +179,7 @@ class AgentLoop[T]:
                 notes.append(self._text("last_turn"))
             if notes:
                 self.messages.append(Message.user("\n\n".join(notes)))
+                self.trace.emit("reminder", text=self.messages[-1].text)
 
             request = LLMRequest(
                 stage=self.config.stage,
@@ -191,6 +196,16 @@ class AgentLoop[T]:
                 return self._finish(StopCause.ERROR, detail=str(exc))
             self._count(response)
             self.messages.append(response.to_message())
+            self.trace.emit(
+                "model_turn",
+                turn=self.turns,
+                text=response.text,
+                tool_calls=response.tool_calls,
+                stop_reason=response.stop_reason,
+                stop_detail=response.stop_detail,
+                usage=response.usage,
+                cached=response.cached,
+            )
 
             if response.stop_reason is StopReason.REFUSED:
                 return self._finish(StopCause.REFUSED, detail=response.stop_detail)
@@ -216,6 +231,7 @@ class AgentLoop[T]:
         """
         terminal = self.terminal.spec.name
         replies: list[Message | None] = [None] * len(calls)
+        ids: list[list[str]] = [[] for _ in calls]  # observation ids each reply lists
         accepted: T | None = None
         submitted = False
         for index, call in enumerate(calls):
@@ -226,6 +242,12 @@ class AgentLoop[T]:
                 continue
             submitted = True
             check = self.terminal.check(call.arguments, self.ledger)
+            self.trace.emit(
+                "submission",
+                call_id=call.id,
+                accepted=check.value is not None and not check.errors,
+                errors=check.errors,
+            )
             if check.value is not None and not check.errors:
                 accepted = check.value
                 replies[index] = Message.tool_result(call, self._text("submission_accepted"))
@@ -246,11 +268,22 @@ class AgentLoop[T]:
                 replies[index] = self._not_run(call, "not_run_limit")
             else:
                 ran += 1
-                replies[index] = self._run_tool(call)
-        self.messages.extend(reply for reply in replies if reply is not None)
+                replies[index], ids[index] = self._run_tool(call)
+        for reply, reply_ids in zip(replies, ids, strict=True):
+            assert reply is not None
+            self.messages.append(reply)
+            self.trace.emit(
+                "tool_result",
+                call_id=reply.tool_call_id,
+                tool=reply.tool_name,
+                is_error=reply.is_error,
+                observation_ids=reply_ids,
+                text=reply.text,
+            )
         return accepted
 
-    def _run_tool(self, call: ToolCall) -> Message:
+    def _run_tool(self, call: ToolCall) -> tuple[Message, list[str]]:
+        """Run one repository tool; returns its reply and the observation ids it lists."""
         self.tool_calls += 1
         result = run_tool(call.name, call.arguments, self.ctx, self.tools)
         known = any(t.name == call.name for t in self.tools)
@@ -260,8 +293,10 @@ class AgentLoop[T]:
             content = result.content
             if len(content) > limit:
                 content = content[:limit] + " [cut short]"
-            return Message.tool_result(call, untrusted(label, content), is_error=True)
-        return Message.tool_result(call, self.present(label, result.content, result.observations))
+            return Message.tool_result(call, untrusted(label, content), is_error=True), []
+        ids = self.ledger.record(result.observations)
+        text = self.ledger.annotate(untrusted(label, result.content), ids)
+        return Message.tool_result(call, text), ids
 
     def _not_run(self, call: ToolCall, reason: str) -> Message:
         return Message.tool_result(call, self._text(reason), is_error=True)
@@ -281,6 +316,17 @@ class AgentLoop[T]:
     def _finish(
         self, cause: StopCause, *, submission: T | None = None, detail: str | None = None
     ) -> LoopResult[T]:
+        self.trace.emit(
+            "loop_end",
+            cause=cause,
+            detail=detail,
+            turns=self.turns,
+            cached_turns=self.cached_turns,
+            tool_calls=self.tool_calls,
+            observations=len(self.ledger),
+            usage=self.usage,
+            rejections=self.rejections,
+        )
         return LoopResult(
             cause=cause,
             submission=submission,

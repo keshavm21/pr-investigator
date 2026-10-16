@@ -22,8 +22,10 @@ from pr_investigator.domain import (
     ReviewTarget,
     Severity,
 )
+from pr_investigator.llm.prompts import Prompt
 from pr_investigator.llm.types import Message, Usage
 from pr_investigator.review.baseline import Coverage
+from pr_investigator.trace import Trace
 
 
 class AgentBudget(BaseModel, frozen=True):
@@ -97,6 +99,38 @@ class AgentReview(BaseModel):
     requests: int = 0  # model requests, cached ones included
     cached_requests: int = 0
     duration_seconds: float = 0.0
+
+
+def emit_run_start(
+    trace: Trace,
+    reviewer: str,
+    target: ReviewTarget,
+    provider: str,
+    model: str,
+    budget: AgentBudget,
+    prompts: tuple[Prompt, ...],
+) -> None:
+    trace.emit(
+        "run_start",
+        reviewer=reviewer,
+        target=target,
+        provider=provider,
+        model=model,
+        budget=budget,
+        prompts={p.id: p.sha256 for p in prompts},
+    )
+
+
+def emit_run_end(trace: Trace, review: "AgentReview") -> None:
+    trace.emit(
+        "run_end",
+        summary=review.summary,
+        findings=review.findings,
+        usage=review.usage,
+        requests=review.requests,
+        cached_requests=review.cached_requests,
+        duration_seconds=review.duration_seconds,
+    )
 
 
 class Findings:

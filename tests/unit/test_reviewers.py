@@ -1,5 +1,6 @@
 """The planner and the agentic reviewers A2 and A1, with a scripted provider. All offline."""
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,14 +22,24 @@ from pr_investigator.domain import (
     Anchor,
     Category,
     DataClass,
+    Evidence,
     EvidenceRole,
     ReviewTarget,
     Side,
 )
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.fake import Script, ScriptedAdapter
-from pr_investigator.llm.types import Completion, StopReason, ToolCall, Usage
+from pr_investigator.llm.types import (
+    Completion,
+    LLMQuotaExhaustedError,
+    LLMRequest,
+    StopReason,
+    ToolCall,
+    Usage,
+)
 from pr_investigator.review.baseline import Coverage
+from pr_investigator.review.report import _evidence, render_markdown
+from pr_investigator.trace import Trace, read_trace, render_trace
 from pr_investigator.workspace import Workspace
 from tests.support import MakeRepo, OpenWorkspace
 
@@ -389,3 +400,98 @@ async def test_an_opening_too_small_for_the_whole_file_starts_at_the_suspect_hun
     assert head_observation is not None and head_observation.start_line is not None
     assert head_observation.end_line is not None
     assert head_observation.start_line <= 250 <= head_observation.end_line
+
+
+async def test_an_a2_trace_records_the_run_as_it_happens(pr: Setup, tmp_path: Path) -> None:
+    target, workspace, diff = pr
+    script: list[Script] = [
+        {"summary": "Drops tax.", "suspects": [suspect("app/pricing.py", 1, 1, 1, "callers")]},
+        reply(tool("read_file", path="app/orders.py")),
+        reply(tool("submit_verdict", status="confirmed", **claim(BROKEN_CALLER))),
+    ]
+    path = tmp_path / "trace.jsonl"
+    with Trace(path) as trace:
+        review = await review_a2(
+            target,
+            workspace,
+            diff,
+            LLMClient(ScriptedAdapter(script)),
+            max_diff_chars=50_000,
+            trace=trace,
+        )
+    events = read_trace(path)
+    assert [(e["event"], e.get("scope")) for e in events] == [
+        ("run_start", None),
+        ("plan", None),
+        ("investigation_start", "S1"),
+        ("opening", "S1"),
+        ("model_turn", "S1"),
+        ("tool_result", "S1"),
+        ("model_turn", "S1"),
+        ("submission", "S1"),
+        ("tool_result", "S1"),
+        ("loop_end", "S1"),
+        ("investigation_end", "S1"),
+        ("run_end", None),
+    ]
+    assert events[5]["observation_ids"] == ["O3"] and events[7]["accepted"] is True
+    assert events[-1]["findings"][0]["evidence"][0]["snippet"] == "def total(items):"
+
+    timeline = render_trace(events)
+    assert "Run: a2 review of" in timeline
+    assert "  S1 [correctness, priority 1] app/pricing.py:1: callers" in timeline
+    assert "turn 1: read_file(path='app/orders.py')" in timeline
+    assert "-> [Observations you can cite: O3 = app/orders.py lines 1-5 (head)]" in timeline
+    assert "outcome: confirmed, reported as F1" in timeline
+    assert "    | def total(items):" in timeline
+    assert "opening message:" not in timeline
+    assert "opening message:" in render_trace(events, full=True)
+
+    markdown = render_markdown(review)
+    assert "requests: 3 (0 from cache)" in markdown
+    assert "**Evidence** (lines re-read from the analyzed commit):" in markdown
+    assert "- defect_site `app/pricing.py:1-1 (head)`: why" in markdown
+    assert "  ```\n  def total(items):\n  ```" in markdown
+    assert "| S1: callers | confirmed | submitted | 2 | F1 |" in markdown
+
+
+async def test_a_crash_leaves_a_trace_ending_in_the_error(pr: Setup, tmp_path: Path) -> None:
+    target, workspace, diff = pr
+
+    def quota(_request: LLMRequest) -> Completion:
+        raise LLMQuotaExhaustedError("quota used up")
+
+    script: list[Script] = [
+        {"summary": "s", "suspects": [suspect("app/pricing.py", 1, 1, 1)]},
+        reply(tool("read_file", path="app/orders.py")),
+        quota,
+    ]
+    path = tmp_path / "trace.jsonl"
+    with Trace(path) as trace, pytest.raises(LLMQuotaExhaustedError):
+        await review_a2(
+            target,
+            workspace,
+            diff,
+            LLMClient(ScriptedAdapter(script)),
+            max_diff_chars=50_000,
+            trace=trace,
+        )
+    events = read_trace(path)
+    assert [e["event"] for e in events][-3:] == ["model_turn", "tool_result", "error"]
+    assert events[-1]["message"] == "quota used up"
+    assert "ERROR (LLMQuotaExhaustedError): quota used up" in render_trace(events)
+
+
+def test_evidence_fences_are_longer_than_any_backticks_in_the_snippet() -> None:
+    item = Evidence(
+        role=EvidenceRole.CONTEXT,
+        observation_id="O1",
+        note="n",
+        ref="head",
+        path="README.md",
+        start_line=1,
+        end_line=1,
+        snippet="```` not the end",
+    )
+    lines = _evidence(item)
+    assert lines[2] == "  `````" and lines[-2] == "  `````"

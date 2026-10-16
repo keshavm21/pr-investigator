@@ -2,7 +2,7 @@
 
 An evidence-driven AI reviewer for GitHub pull requests. Instead of sending a diff to an LLM and posting whatever comes back, it forms hypotheses, investigates them with read-only tools across the repository, verifies what it finds, and lets a human approve what gets posted.
 
-> **Status: Phase 1 of 7.** What exists today is the foundation: PR ingestion, read-only repository tools, a one-call baseline reviewer (B0) to measure later phases against, and the evaluation harness. Agentic investigation arrives in Phase 2. See the [implementation plan](docs/implementation-plan.md).
+> **Status: Phase 2 of 7, built and tested offline.** Phase 1 laid the foundation: PR ingestion, read-only repository tools, a one-call baseline reviewer (B0) to measure later phases against, and the evaluation harness. Phase 2 adds agentic investigation: a planner lists suspected problems, a bounded agent investigates each one with the read-only tools, and every reported finding must cite lines the tools actually showed, checked mechanically against the analyzed commit. Its evaluation against B0 is next. See the [implementation plan](docs/implementation-plan.md).
 
 ## Quick start
 
@@ -13,10 +13,14 @@ uv sync
 cp .env.example .env      # add GEMINI_API_KEY; use an AI Studio key from a project without billing
 uv run pri doctor         # checks the setup without calling any API
 
-uv run pri review https://github.com/OWNER/REPO/pull/123     # review a public PR
+uv run pri review https://github.com/OWNER/REPO/pull/123     # review a public PR (baseline)
+uv run pri review https://github.com/OWNER/REPO/pull/123 --reviewer a2   # agentic review
+uv run pri show RUN_ID    # what an agentic review did: plan, investigations, evidence
 uv run pri eval validate  # check the evaluation cases (no LLM calls)
 uv run pri eval run       # score the baseline on the evaluation cases
 ```
+
+Reviewers: `b0` makes one call on the diff; `a2` runs a planner, then one bounded investigation per suspect (up to about 26 requests per PR); `a1` runs one agent loop over the whole PR (up to 12 requests). `b0` stays the default until the Phase 2 evaluation shows the agentic reviewer is better.
 
 It runs on Gemini's free tier. `.env.example` sets `PRI_LLM_MODEL=gemini-3.5-flash-lite`, the model the evaluation baseline uses (the code default is `gemini-3.8-flash`). Free-tier inputs may be used for training, so PR Investigator refuses to send a private repository's code to it.
 
