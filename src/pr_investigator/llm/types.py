@@ -164,6 +164,8 @@ class Completion(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
     provider_data: dict[str, Any] | None = None  # see Message.provider_data
     cached: bool = False
+    # Provider errors retried before this completion came back (real calls only, not cached).
+    retries: list[str] = Field(default_factory=list)
 
 
 class LLMResponse(BaseModel):
@@ -180,6 +182,7 @@ class LLMResponse(BaseModel):
     attempts: int = 1
     cached: bool = False
     provider_data: dict[str, Any] | None = None
+    retries: list[str] = Field(default_factory=list)  # see Completion.retries
 
     def to_message(self) -> Message:
         """The assistant turn to append to the conversation, with its replay data."""

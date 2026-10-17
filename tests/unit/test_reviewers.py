@@ -222,7 +222,7 @@ async def test_a2_plans_investigates_each_suspect_and_reports_only_verified_find
 
     assert review.requests == 7 and len(adapter.requests) == 7 and review.cached_requests == 0
     assert review.usage.input_tokens == 600  # the planner's scripted reply reports no usage
-    assert set(review.prompts) == {"planner.v1", "investigator.v2", "agent_loop.v1"}
+    assert set(review.prompts) == {"planner.v1", "investigator.v3", "agent_loop.v1"}
     assert [r.stage for r in adapter.requests] == ["plan"] + ["investigate"] * 6
     assert adapter.requests[0].output_schema is PlannerOutput
     assert "messages" not in review.model_dump_json()  # conversations are for traces
@@ -276,7 +276,7 @@ async def test_a1_reviews_the_whole_pr_and_fixes_a_rejected_report(pr: Setup) ->
     assert review.single.rejections == [
         ["finding 1: evidence 1 (O9): no observation with that id was shown to you"]
     ]
-    assert review.requests == 3 and set(review.prompts) == {"single_agent.v2", "agent_loop.v1"}
+    assert review.requests == 3 and set(review.prompts) == {"single_agent.v3", "agent_loop.v1"}
     request = adapter.requests[0]
     assert request.stage == "single_agent" and request.tools[-1].name == "report_findings"
     opening = request.messages[0].text
@@ -502,6 +502,6 @@ def test_the_v2_prompts_show_a_complete_evidence_example() -> None:
     from pr_investigator.agent.single import single_agent_prompt
 
     for prompt in (investigator_prompt(), single_agent_prompt()):
-        assert prompt.version == 2
+        assert prompt.version == 3
         assert '"role": "defect_site", "path": "app/users.py", "start_line": 31' in prompt.text
         assert "even for a single line" in prompt.text

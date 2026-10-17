@@ -218,8 +218,8 @@ async def test_a2_confirms_the_broken_caller_refutes_the_decoy_and_replays_from_
     assert summary.agent.outcomes == {"confirmed": 1, "refuted": 1}
     assert summary.agent.stop_causes == {"submitted": 2} and summary.agent.rejections == 0
     assert info.reviewer == "a2" and info.budget is not None
-    assert set(info.prompts) == {"planner.v1", "investigator.v2", "agent_loop.v1"}
-    assert info.review_prompt == "planner.v1, investigator.v2, agent_loop.v1"
+    assert set(info.prompts) == {"planner.v1", "investigator.v3", "agent_loop.v1"}
+    assert info.review_prompt == "planner.v1, investigator.v3, agent_loop.v1"
 
     traces = sorted(p.name for p in (out / "traces").iterdir())
     assert traces == [f"{CLEAN}-s0.jsonl", f"{DECOY}-s0.jsonl", f"{BROKEN}-s0.jsonl"]

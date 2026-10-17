@@ -38,7 +38,7 @@ from pr_investigator.trace import Trace, errors_traced
 from pr_investigator.workspace import Workspace
 
 STAGE = "investigate"
-PROMPT_NAME, PROMPT_VERSION = "investigator", 2
+PROMPT_NAME, PROMPT_VERSION = "investigator", 3
 REVIEWER = "a2"
 
 
@@ -107,10 +107,12 @@ async def _review_a2(
         usage=plan.usage,
         attempts=plan.attempts,
         cached=plan.cached,
+        retries=plan.retries,
     )
     usage = plan.usage
     requests = plan.attempts
     cached_requests = plan.attempts if plan.cached else 0
+    retries = plan.retries
     findings = Findings()
     investigations: list[Investigation] = []
     for suspect in plan.suspects:  # sequential by design: the rate limit sets the pace
@@ -144,6 +146,7 @@ async def _review_a2(
         usage = usage + investigation.loop.usage
         requests += investigation.loop.turns
         cached_requests += investigation.loop.cached_turns
+        retries += investigation.loop.retries
 
     return AgentReview(
         reviewer=REVIEWER,
@@ -161,6 +164,7 @@ async def _review_a2(
         usage=usage,
         requests=requests,
         cached_requests=cached_requests,
+        retries=retries,
         duration_seconds=round(time.monotonic() - started, 3),
     )
 

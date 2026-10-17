@@ -50,6 +50,7 @@ class LoopRecord(BaseModel):
     turns: int
     cached_turns: int
     tool_calls: int
+    retries: int = 0
     observations: int
     usage: Usage
     rejections: list[list[str]] = Field(default_factory=list)
@@ -63,6 +64,7 @@ class LoopRecord(BaseModel):
             turns=result.turns,
             cached_turns=result.cached_turns,
             tool_calls=result.tool_calls,
+            retries=result.retries,
             observations=len(result.ledger),
             usage=result.usage,
             rejections=result.rejections,
@@ -98,6 +100,7 @@ class AgentReview(BaseModel):
     usage: Usage = Field(default_factory=Usage)
     requests: int = 0  # model requests, cached ones included
     cached_requests: int = 0
+    retries: int = 0  # provider errors retried by the guard, planner included
     duration_seconds: float = 0.0
 
 

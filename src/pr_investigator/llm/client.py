@@ -145,4 +145,5 @@ def _response(
         attempts=len(attempts),
         cached=all(c.cached for c in attempts),
         provider_data=final.provider_data,
+        retries=[error for attempt in attempts for error in attempt.retries],
     )

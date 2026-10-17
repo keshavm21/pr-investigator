@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from pr_investigator.agent.evidence import EvidenceRef
 from pr_investigator.agent.loop import AgentLoop, LoopConfig, LoopResult, StopCause
 from pr_investigator.agent.verdict import (
     CheckedVerdict,
@@ -484,14 +485,32 @@ async def test_enum_values_are_matched_case_insensitively_but_never_invented(run
     assert errors[0].startswith("evidence.0.role: Input should be 'defect_site'")
 
 
-async def test_a_missing_line_field_is_named_exactly(run: Run) -> None:
-    # From the live smoke review: the model sent end_line without start_line.
-    item = cite("O1")
-    del item["start_line"]
-    result, _ = await run([reply(submit("s", verdict("confirmed", item)))], max_turns=1)
+async def test_line_keys_are_required_and_a_null_one_is_named_exactly(run: Run) -> None:
+    # From the live runs: the model left start_line out of line evidence.
+    omitted = cite("O1")
+    del omitted["start_line"]
+    result, _ = await run([reply(submit("s", verdict("confirmed", omitted)))], max_turns=1)
+    assert result.rejections == [["evidence.0.start_line: Field required"]]
+
+    nulled = cite("O1")
+    nulled["start_line"] = None
+    result, _ = await run([reply(submit("s", verdict("confirmed", nulled)))], max_turns=1)
     assert result.rejections == [
         [
             "evidence 1 (O1): start_line is missing; "
             "line evidence needs path, start_line and end_line"
         ]
     ]
+
+
+def test_the_evidence_schema_requires_the_line_keys() -> None:
+    schema = EvidenceRef.model_json_schema()
+    assert set(schema["required"]) >= {"observation_id", "role", "path", "start_line", "end_line"}
+    assert {"type": "null"} in schema["properties"]["start_line"]["anyOf"]  # null for absence
+
+
+async def test_provider_retries_are_counted_and_traced(run: Run) -> None:
+    retried = reply(submit("s", verdict("inconclusive")))
+    retried = retried.model_copy(update={"retries": ["LLMTransientError: 503"]})
+    result, _ = await run([retried])
+    assert result.retries == 1

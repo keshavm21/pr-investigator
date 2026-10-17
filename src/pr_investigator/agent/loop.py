@@ -118,6 +118,7 @@ class LoopResult[T]:
     turns: int  # model requests made
     cached_turns: int  # of those, answered from the response cache
     tool_calls: int  # tool calls executed, failed ones included (not those refused as over-limit)
+    retries: int  # provider errors retried by the guard (real calls only)
     usage: Usage
     rejections: list[list[str]]  # the errors sent back for each rejected submission
     messages: list[Message]
@@ -151,6 +152,7 @@ class AgentLoop[T]:
         self.turns = 0
         self.cached_turns = 0
         self.tool_calls = 0
+        self.retries = 0
         self.usage = Usage()
         self.rejections: list[list[str]] = []
         self._texts = load_prompt(PROMPT_NAME, PROMPT_VERSION).sections()
@@ -205,6 +207,7 @@ class AgentLoop[T]:
                 stop_detail=response.stop_detail,
                 usage=response.usage,
                 cached=response.cached,
+                retries=response.retries,
             )
 
             if response.stop_reason is StopReason.REFUSED:
@@ -311,6 +314,7 @@ class AgentLoop[T]:
     def _count(self, response: LLMResponse) -> None:
         self.turns += 1
         self.cached_turns += response.cached
+        self.retries += len(response.retries)
         self.usage = self.usage + response.usage
 
     def _finish(
@@ -323,6 +327,7 @@ class AgentLoop[T]:
             turns=self.turns,
             cached_turns=self.cached_turns,
             tool_calls=self.tool_calls,
+            retries=self.retries,
             observations=len(self.ledger),
             usage=self.usage,
             rejections=self.rejections,
@@ -334,6 +339,7 @@ class AgentLoop[T]:
             turns=self.turns,
             cached_turns=self.cached_turns,
             tool_calls=self.tool_calls,
+            retries=self.retries,
             usage=self.usage,
             rejections=self.rejections,
             messages=self.messages,

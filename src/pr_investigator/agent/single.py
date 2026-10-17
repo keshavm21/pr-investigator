@@ -35,7 +35,7 @@ from pr_investigator.trace import Trace, errors_traced
 from pr_investigator.workspace import Workspace
 
 STAGE = "single_agent"
-PROMPT_NAME, PROMPT_VERSION = "single_agent", 2
+PROMPT_NAME, PROMPT_VERSION = "single_agent", 3
 REVIEWER = "a1"
 
 
@@ -214,6 +214,7 @@ async def _review_a1(
             "usage": record.usage,
             "requests": record.turns,
             "cached_requests": record.cached_turns,
+            "retries": record.retries,
             "duration_seconds": round(time.monotonic() - started, 3),
         }
     )

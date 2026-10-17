@@ -187,6 +187,8 @@ def _model_turn(event: dict[str, Any], full: bool) -> list[str]:
     what = ", ".join(_call(c) for c in calls) if calls else f"no tool call ({stop})"
     if event.get("stop_detail"):
         what += f" [{event['stop_detail']}]"
+    if event.get("retries"):
+        what += f" [after {len(event['retries'])} retries: {event['retries'][-1][:80]}]"
     lines = [f"  turn {event.get('turn')}: {what}  [{tokens}{cached}]"]
     text = event.get("text", "")
     if text:

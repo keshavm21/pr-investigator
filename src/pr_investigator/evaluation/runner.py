@@ -335,5 +335,6 @@ def _agent_section(summary: Summary) -> list[str]:
         f"| Turns / tool calls | {agent.turns} / {agent.tool_calls} |",
         f"| Submissions rejected by the evidence check | {agent.rejections} |",
         f"| Duplicate confirmations | {agent.duplicates} |",
+        f"| Provider retries | {agent.retries} |",
         "",
     ]

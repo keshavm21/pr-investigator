@@ -48,13 +48,17 @@ class EvidenceRef(BaseModel):
             "absence: a search that found no matches."
         )
     )
+    # Required keys, even though absence items set them to null: models leave optional line
+    # fields out of line evidence (seen in the live smoke review and the first A2 eval).
     path: str | None = Field(
-        default=None, description="The observation's file path. Not needed for absence."
+        description="The observation's file path. Always give it; null only for absence."
     )
     start_line: int | None = Field(
-        default=None, description="First cited line. Not needed for absence."
+        description="First cited line. Always give it, even for one line; null only for absence."
     )
-    end_line: int | None = Field(default=None, description="Last cited line.")
+    end_line: int | None = Field(
+        description="Last cited line (the same as start_line for one line); null only for absence."
+    )
     note: str = Field(description="Why this item supports the claim.")
 
 

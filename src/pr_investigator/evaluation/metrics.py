@@ -22,6 +22,7 @@ class AgentStats(BaseModel):
     tool_calls: int = 0
     rejections: int = 0  # submissions the evidence check sent back
     duplicates: int = 0  # confirmed problems already reported by another investigation
+    retries: int = 0  # provider errors retried by the guard
 
     @classmethod
     def of(cls, review: AgentReview) -> "AgentStats":
@@ -37,6 +38,7 @@ class AgentStats(BaseModel):
             tool_calls=sum(loop.tool_calls for loop in loops),
             rejections=sum(len(loop.rejections) for loop in loops),
             duplicates=sum(1 for i in review.investigations if i.duplicate_of),
+            retries=review.retries,
         )
 
     def __add__(self, other: "AgentStats") -> "AgentStats":
@@ -49,6 +51,7 @@ class AgentStats(BaseModel):
             tool_calls=self.tool_calls + other.tool_calls,
             rejections=self.rejections + other.rejections,
             duplicates=self.duplicates + other.duplicates,
+            retries=self.retries + other.retries,
         )
 
 

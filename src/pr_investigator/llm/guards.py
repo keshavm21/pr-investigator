@@ -96,11 +96,13 @@ class GuardedAdapter:
 
     async def complete(self, request: LLMRequest) -> Completion:
         attempt = 0
+        retried: list[str] = []  # why earlier attempts failed, kept with the completion
         while True:
             self.budget.take()
             await self.rate_limiter.acquire()
             try:
-                return await self.inner.complete(request)
+                completion = await self.inner.complete(request)
+                return completion.model_copy(update={"retries": retried}) if retried else completion
             except LLMRateLimitError as exc:
                 if attempt >= self.max_retries:
                     raise LLMQuotaExhaustedError(
@@ -110,12 +112,19 @@ class GuardedAdapter:
                         f"Last error: {exc}"
                     ) from exc
                 delay = exc.retry_after if exc.retry_after is not None else _backoff(attempt)
-            except LLMTransientError:
+                retried.append(_brief(exc))
+            except LLMTransientError as exc:
                 if attempt >= self.max_retries:
                     raise
                 delay = _backoff(attempt)
+                retried.append(_brief(exc))
             await self._sleep(delay)
             attempt += 1
+
+
+def _brief(exc: Exception) -> str:
+    text = f"{type(exc).__name__}: {exc}"
+    return text if len(text) <= 200 else text[:200] + "..."
 
 
 def _backoff(attempt: int) -> float:

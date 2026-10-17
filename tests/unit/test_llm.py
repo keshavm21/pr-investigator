@@ -331,3 +331,16 @@ async def test_exhausted_quota_message_keeps_the_original_error() -> None:
     with pytest.raises(LLMQuotaExhaustedError) as raised:
         await guarded(adapter, FakeClock(), RequestBudget()).complete(request())
     assert original in str(raised.value)
+
+
+async def test_retries_are_recorded_on_the_completion_but_never_replayed(tmp_path: Path) -> None:
+    clock = FakeClock()
+    flaky = FlakyAdapter([LLMTransientError("server error (503)")])
+    cached = CachingAdapter(
+        guarded(flaky, clock, RequestBudget()), ResponseCache(tmp_path), CacheMode.READ_WRITE
+    )
+    client = LLMClient(cached)
+    first = await client.generate(request())
+    assert first.retries == ["LLMTransientError: server error (503)"]
+    again = await client.generate(request())  # served from the cache
+    assert again.cached and again.retries == []

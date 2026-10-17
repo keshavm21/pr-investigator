@@ -57,6 +57,7 @@ class Plan(BaseModel):
     usage: Usage = Field(default_factory=Usage)
     attempts: int = 0  # model requests, a repair included
     cached: bool = False
+    retries: int = 0  # provider errors retried by the guard
 
 
 def planner_prompt() -> Prompt:
@@ -119,6 +120,7 @@ async def make_plan(
         usage=response.usage,
         attempts=response.attempts,
         cached=response.cached,
+        retries=len(response.retries),
     )
 
 
