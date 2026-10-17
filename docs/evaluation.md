@@ -131,7 +131,7 @@ Effort levels and, if D3 allows, cheaper models per stage are tested as further 
 - `pri eval run --reviewer b0|a2|a1 --samples N --no-judge --max-requests N` writes `results.jsonl`, `summary.json` and `summary.md` under `evals/results/<time>-<reviewer>-<model>/`. A1 and A2 also write one trace per case and sample to `traces/<case>-s<sample>.jsonl`, readable with `pri show`. (Later phases add more configurations, such as A3.)
 - During development, use a subset of 5–10 cases with 1 repetition.
 - Responses are cached by a hash of the request, so re-scoring results or regenerating a report never spends quota again. A rerun from the cache writes its traces again.
-- Every eval run records the reviewer, provider, exact model ID, each prompt's id and SHA-256, the agent budget, the commit of the PR Investigator checkout and whether it had uncommitted changes, review requests (and how many came from the cache), real provider requests (retries and judge calls included), and tokens. A request cap stops the run cleanly when reached.
+- Every eval run records the reviewer, provider, exact model ID, each prompt's id and SHA-256, the agent budget, the commit of the PR Investigator checkout and whether it had uncommitted changes (result folders under `evals/results/` don't count), review requests (and how many came from the cache), real provider requests (retries and judge calls included), and tokens. A request cap stops the run cleanly when reached.
 - A client-side rate limiter keeps requests within the provider's per-minute quotas. Runs pause and resume on HTTP 429 errors rather than failing.
 - Live evals consume free-tier quota, and would cost money on a paid provider. Run them on purpose, never automatically in CI and never for fork PRs.
 

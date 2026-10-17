@@ -1,0 +1,79 @@
+{
+  "run": {
+    "reviewer": "a1",
+    "started_at": "2026-10-17T07:31:03+00:00",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "judge": "location-only",
+    "samples": 1,
+    "tolerance": 3,
+    "review_prompt": "single_agent.v3, agent_loop.v1",
+    "cases": [
+      "clean-extract-rows-helper",
+      "clean-health-endpoint",
+      "decoy-admin-router-auth",
+      "decoy-allowlisted-sort",
+      "seeded-broken-caller-signature",
+      "seeded-missing-authorization",
+      "seeded-none-dereference",
+      "seeded-off-by-one-pagination",
+      "seeded-path-traversal-attachments",
+      "seeded-sql-injection-search"
+    ],
+    "stopped_early": null,
+    "prompts": {
+      "single_agent.v3": "2548e49b80320586ddfa34fe13d8d41addcbc98aed7fb445c319def6bacaf07e",
+      "agent_loop.v1": "ef26627793e5dbdf024e65d3e5b8ebcd49c2c12039d941477ac0d819637d50e6"
+    },
+    "budget": {
+      "max_suspects": 4,
+      "investigation_turns": 6,
+      "single_agent_turns": 12,
+      "max_tool_calls_per_turn": 3,
+      "max_tool_output_chars": 4000,
+      "investigation_diff_chars": 8000,
+      "single_agent_diff_chars": 24000,
+      "max_findings": 4
+    },
+    "code_commit": "cb2f4ab3845bf4a41b5bff3c888fe9575ccfc562",
+    "code_dirty": true,
+    "provider_requests": 39
+  },
+  "summary": {
+    "runs": 10,
+    "failed_runs": 0,
+    "findings": 6,
+    "true_positives": 6,
+    "partial_matches": 0,
+    "false_positives": 0,
+    "expected_issues": 6,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f0_5": 1.0,
+    "false_positives_per_clean_run": 0.0,
+    "decoy_trigger_rate": 0.0,
+    "anchor_in_diff_rate": 1.0,
+    "exact_location_rate": 1.0,
+    "input_tokens": 158098,
+    "output_tokens": 3437,
+    "cached_runs": 0,
+    "requests": 39,
+    "cached_requests": 0,
+    "requests_per_run": 3.9,
+    "max_requests_per_run": 7,
+    "agent": {
+      "suspects": 0,
+      "dropped_suspects": 0,
+      "outcomes": {},
+      "stop_causes": {
+        "submitted": 10
+      },
+      "turns": 39,
+      "tool_calls": 29,
+      "rejections": 1,
+      "duplicates": 0,
+      "retries": 0
+    },
+    "verified_evidence_rate": 1.0
+  }
+}
