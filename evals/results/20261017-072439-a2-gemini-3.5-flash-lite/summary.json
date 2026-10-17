@@ -1,0 +1,85 @@
+{
+  "run": {
+    "reviewer": "a2",
+    "started_at": "2026-10-17T07:24:39+00:00",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "judge": "location-only",
+    "samples": 1,
+    "tolerance": 3,
+    "review_prompt": "planner.v1, investigator.v3, agent_loop.v1",
+    "cases": [
+      "clean-extract-rows-helper",
+      "clean-health-endpoint",
+      "decoy-admin-router-auth",
+      "decoy-allowlisted-sort",
+      "seeded-broken-caller-signature",
+      "seeded-missing-authorization",
+      "seeded-none-dereference",
+      "seeded-off-by-one-pagination",
+      "seeded-path-traversal-attachments",
+      "seeded-sql-injection-search"
+    ],
+    "stopped_early": null,
+    "prompts": {
+      "planner.v1": "b318b414f15106d48d31b18ef75cda23e26155791619440a882c7260d981085a",
+      "investigator.v3": "7fb2805a5d902b69b562f114947fd4b7fc6ef848e8f1ec80484f2a06b7ba6e40",
+      "agent_loop.v1": "ef26627793e5dbdf024e65d3e5b8ebcd49c2c12039d941477ac0d819637d50e6"
+    },
+    "budget": {
+      "max_suspects": 4,
+      "investigation_turns": 6,
+      "single_agent_turns": 12,
+      "max_tool_calls_per_turn": 3,
+      "max_tool_output_chars": 4000,
+      "investigation_diff_chars": 8000,
+      "single_agent_diff_chars": 24000,
+      "max_findings": 4
+    },
+    "code_commit": "e73e28b6d09de179976b09022cb79cb089e553f5",
+    "code_dirty": true,
+    "provider_requests": 60
+  },
+  "summary": {
+    "runs": 10,
+    "failed_runs": 0,
+    "findings": 5,
+    "true_positives": 4,
+    "partial_matches": 0,
+    "false_positives": 1,
+    "expected_issues": 6,
+    "precision": 0.8,
+    "recall": 0.6666666666666666,
+    "f0_5": 0.7692307692307692,
+    "false_positives_per_clean_run": 0.0,
+    "decoy_trigger_rate": 0.0,
+    "anchor_in_diff_rate": 1.0,
+    "exact_location_rate": 1.0,
+    "input_tokens": 258325,
+    "output_tokens": 9605,
+    "cached_runs": 0,
+    "requests": 70,
+    "cached_requests": 10,
+    "requests_per_run": 7.0,
+    "max_requests_per_run": 11,
+    "agent": {
+      "suspects": 12,
+      "dropped_suspects": 0,
+      "outcomes": {
+        "refuted": 4,
+        "inconclusive": 3,
+        "confirmed": 5
+      },
+      "stop_causes": {
+        "submitted": 9,
+        "turn_budget": 3
+      },
+      "turns": 60,
+      "tool_calls": 41,
+      "rejections": 10,
+      "duplicates": 0,
+      "retries": 0
+    },
+    "verified_evidence_rate": 1.0
+  }
+}
