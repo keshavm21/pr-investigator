@@ -38,7 +38,7 @@ from tests.support import MakeRepo, OpenWorkspace
 
 TEXTS = {
     name: text.format(terminal="submit_verdict", limit=3, detail="{detail}", errors="{errors}")
-    for name, text in load_prompt("agent_loop", 1).sections().items()
+    for name, text in load_prompt("agent_loop", 2).sections().items()
 }
 FILLER = "".join(f"filler_{n} = {n}\n" for n in range(1, 81))
 
@@ -235,12 +235,14 @@ async def test_a_rejected_submission_gets_precise_errors_and_can_be_fixed(run: R
     assert rejected.text == (
         "submit_verdict was not accepted. Fix these problems and call submit_verdict again:\n"
         "- evidence 1 (O9): no observation with that id was shown to you\n"
-        "- evidence 2 (O1): lines 30-30 are outside what this observation showed (lines 1-5)"
+        "- evidence 2 (O1): lines 30-30 are outside what this observation showed (lines 1-5); "
+        "cite lines within that range, or read the lines you need with read_file first"
     )
     assert result.rejections == [
         [
             "evidence 1 (O9): no observation with that id was shown to you",
-            "evidence 2 (O1): lines 30-30 are outside what this observation showed (lines 1-5)",
+            "evidence 2 (O1): lines 30-30 are outside what this observation showed (lines 1-5); "
+            "cite lines within that range, or read the lines you need with read_file first",
         ]
     ]
 
@@ -320,16 +322,18 @@ async def test_a_reply_without_a_tool_call_gets_a_reminder(run: Run) -> None:
 async def test_the_last_turn_is_announced_and_the_budget_ends_inconclusive(run: Run) -> None:
     reads = [
         reply(call("read_file", f"c{n}", path="app/service.py", start_line=n, end_line=n))
-        for n in range(1, 4)
+        for n in range(1, 5)
     ]
-    result, adapter = await run(reads, max_turns=3)
-    assert len(adapter.requests) == 3
+    result, adapter = await run(reads, max_turns=4)
+    assert len(adapter.requests) == 4
     assert adapter.requests[1].messages[-1].role is Role.TOOL  # no note before turn 2
-    last = adapter.requests[2].messages[-1]
+    two_left = adapter.requests[2].messages[-1]
+    assert two_left.role is Role.USER and two_left.text == TEXTS["two_turns_left"]
+    last = adapter.requests[3].messages[-1]
     assert last.role is Role.USER and last.text == TEXTS["last_turn"]
     assert last.text.startswith("This is your last turn. Call submit_verdict now")
     assert result.cause is StopCause.TURN_BUDGET and result.submission is None
-    assert outcome_status(result) is VerdictStatus.INCONCLUSIVE and result.turns == 3
+    assert outcome_status(result) is VerdictStatus.INCONCLUSIVE and result.turns == 4
 
 
 async def test_the_last_turn_note_replaces_the_plain_reminder(run: Run) -> None:
@@ -459,7 +463,7 @@ def test_prompt_sections_parse_the_loop_messages() -> None:
         name="p", version=1, text="ignored\n## first\nline one\n\nline two\n## second\nx"
     )
     assert prompt.sections() == {"first": "line one\n\nline two", "second": "x"}
-    assert set(load_prompt("agent_loop", 1).sections()) == {
+    assert set(load_prompt("agent_loop", 2).sections()) == {
         "no_tool_call",
         "unusable_reply",
         "last_turn",
@@ -468,6 +472,7 @@ def test_prompt_sections_parse_the_loop_messages() -> None:
         "duplicate_submission",
         "not_run_limit",
         "not_run_ended",
+        "two_turns_left",
     }
 
 
@@ -485,19 +490,21 @@ async def test_enum_values_are_matched_case_insensitively_but_never_invented(run
     assert errors[0].startswith("evidence.0.role: Input should be 'defect_site'")
 
 
-async def test_line_keys_are_required_and_a_null_one_is_named_exactly(run: Run) -> None:
-    # From the live runs: the model left start_line out of line evidence.
-    omitted = cite("O1")
-    del omitted["start_line"]
-    result, _ = await run([reply(submit("s", verdict("confirmed", omitted)))], max_turns=1)
-    assert result.rejections == [["evidence.0.start_line: Field required"]]
+async def test_one_end_of_a_line_range_cites_that_single_line(run: Run) -> None:
+    # From the live runs: the model sent end_line without start_line.
+    one_sided = cite("O1")
+    del one_sided["start_line"]
+    result, _ = await run([reply(submit("s", verdict("confirmed", one_sided)))], max_turns=1)
+    assert result.submission is not None
+    (item,) = result.submission.evidence
+    assert (item.start_line, item.end_line, item.snippet) == (2, 2, "    check(user)")
 
-    nulled = cite("O1")
-    nulled["start_line"] = None
-    result, _ = await run([reply(submit("s", verdict("confirmed", nulled)))], max_turns=1)
+    no_lines = cite("O1")
+    no_lines["start_line"] = no_lines["end_line"] = None
+    result, _ = await run([reply(submit("s", verdict("confirmed", no_lines)))], max_turns=1)
     assert result.rejections == [
         [
-            "evidence 1 (O1): start_line is missing; "
+            "evidence 1 (O1): start_line and end_line are missing; "
             "line evidence needs path, start_line and end_line"
         ]
     ]

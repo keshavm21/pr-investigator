@@ -66,7 +66,9 @@ def code_version() -> tuple[str | None, bool | None]:
         return None, None
     try:
         commit = run_git(["rev-parse", "HEAD"], cwd=root).decode().strip()
-        dirty = bool(run_git(["status", "--porcelain"], cwd=root).strip())
+        # Result folders written by evals don't count as code changes.
+        status = ["status", "--porcelain", "--", ".", ":(exclude)evals/results"]
+        dirty = bool(run_git(status, cwd=root).strip())
     except PRIError:
         return None, None
     return commit, dirty

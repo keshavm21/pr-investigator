@@ -54,7 +54,7 @@ from pr_investigator.tools import (
 from pr_investigator.trace import Trace
 from pr_investigator.workspace import Workspace
 
-PROMPT_NAME, PROMPT_VERSION = "agent_loop", 1
+PROMPT_NAME, PROMPT_VERSION = "agent_loop", 2
 MAX_VALIDATION_PROBLEMS = 8
 
 
@@ -179,6 +179,9 @@ class AgentLoop[T]:
                 notes.append(self._text(reminder[0], detail=reminder[1]))
             if last_turn:
                 notes.append(self._text("last_turn"))
+            elif self.config.max_turns >= 3 and self.turns == self.config.max_turns - 2:
+                # Early enough that a rejected submission still gets its fix.
+                notes.append(self._text("two_turns_left"))
             if notes:
                 self.messages.append(Message.user("\n\n".join(notes)))
                 self.trace.emit("reminder", text=self.messages[-1].text)

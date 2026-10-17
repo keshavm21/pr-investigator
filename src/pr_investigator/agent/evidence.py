@@ -15,7 +15,7 @@ the review comment.
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from pr_investigator.agent.ledger import ObservationLedger
 from pr_investigator.diff import ParsedDiff
@@ -39,6 +39,24 @@ class EvidenceRef(BaseModel):
     """One evidence item as the model submits it."""
 
     _role_case = field_validator("role", mode="before")(lowercase)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _single_line(cls, data: Any) -> Any:
+        """Line evidence with only one end of the range cites that one line.
+
+        Models often send end_line without start_line (seen in every live A2 run). Reading it as
+        the narrowest possible citation keeps a verified result from being lost to a formatting
+        slip; the line is still checked against the observation and re-read like any other.
+        """
+        if not isinstance(data, dict) or lowercase(data.get("role")) == "absence":
+            return data
+        start, end = data.get("start_line"), data.get("end_line")
+        if start is None and end is not None:
+            return {**data, "start_line": end}
+        if end is None and start is not None:
+            return {**data, "end_line": start}
+        return data
 
     observation_id: str = Field(description="An observation id you were shown, such as 'O3'.")
     role: EvidenceRole = Field(
@@ -140,7 +158,8 @@ def _verify(
     if ref.start_line < observation.start_line or ref.end_line > observation.end_line:
         return None, (
             f"lines {ref.start_line}-{ref.end_line} are outside what this observation showed "
-            f"(lines {observation.start_line}-{observation.end_line})"
+            f"(lines {observation.start_line}-{observation.end_line}); cite lines within that "
+            "range, or read the lines you need with read_file first"
         )
     try:
         lines = load_lines(workspace, path, observation.ref)

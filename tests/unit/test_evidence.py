@@ -173,8 +173,8 @@ def test_unknown_observation_is_rejected(inv: Investigation) -> None:
         ("app/service.py", 38, 41, "lines 38-41 are outside what this observation showed (40-50)"),
         ("app/service.py", 49, 51, "outside what this observation showed"),
         ("app/service.py", 45, 44, "start_line must be at least 1 and no greater than end_line"),
-        ("app/service.py", None, 44, "start_line is missing; line evidence needs path"),
-        (None, None, 45, "path and start_line are missing"),
+        ("app/service.py", None, None, "start_line and end_line are missing; line evidence"),
+        (None, 44, 45, "path is missing"),
     ],
 )
 def test_line_evidence_must_match_the_observation(
@@ -241,3 +241,11 @@ def test_absence_and_line_evidence_need_the_right_kind_of_observation(
         f"evidence 3 ({search_with_matches}): context evidence must cite lines a tool showed, "
         "not a search",
     ]
+
+
+def test_one_end_of_a_range_cites_that_line(inv: Investigation) -> None:
+    far = inv.observe_one("read_file", path="app/service.py", start_line=40, end_line=50)
+    check = inv.check(cite(far, CONTEXT, "app/service.py", None, 44), require_defect_site=False)
+    assert check.ok and check.evidence[0].snippet == "filler_41 = 41"
+    outside = inv.check(cite(far, CONTEXT, "app/service.py", 52, None), require_defect_site=False)
+    assert "lines 52-52 are outside" in outside.errors[0]
