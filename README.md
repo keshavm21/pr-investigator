@@ -2,7 +2,7 @@
 
 An evidence-driven AI reviewer for GitHub pull requests. Instead of sending a diff to an LLM and posting whatever comes back, it forms hypotheses, investigates them with read-only tools across the repository, verifies what it finds, and lets a human approve what gets posted.
 
-> **Status: Phase 1 of 7.** What exists today is the foundation: PR ingestion, read-only repository tools, a one-call baseline reviewer (B0) to measure later phases against, and the evaluation harness. Agentic investigation arrives in Phase 2. See the [implementation plan](docs/implementation-plan.md).
+> **Status: Phase 2 of 7, built and evaluated.** Phase 1 laid the foundation: PR ingestion, read-only repository tools, a one-call baseline reviewer (B0) to measure later phases against, and the evaluation harness. Phase 2 adds agentic investigation: a planner lists suspected problems, a bounded agent investigates each one with the read-only tools, and every reported finding must cite lines the tools actually showed, checked mechanically against the analyzed commit. On the evaluation cases, both agentic reviewers find issues the baseline misses because they need code outside the diff, with every finding backed by verified evidence ([results](evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)). See the [implementation plan](docs/implementation-plan.md).
 
 ## Quick start
 
@@ -13,10 +13,14 @@ uv sync
 cp .env.example .env      # add GEMINI_API_KEY; use an AI Studio key from a project without billing
 uv run pri doctor         # checks the setup without calling any API
 
-uv run pri review https://github.com/OWNER/REPO/pull/123     # review a public PR
+uv run pri review https://github.com/OWNER/REPO/pull/123     # review a public PR (agentic, A1)
+uv run pri review https://github.com/OWNER/REPO/pull/123 --reviewer a2   # planner + investigations
+uv run pri show RUN_ID    # what an agentic review did: its turns, evidence and findings
 uv run pri eval validate  # check the evaluation cases (no LLM calls)
 uv run pri eval run       # score the baseline on the evaluation cases
 ```
+
+Reviewers: `a1` (the default) runs one bounded agent loop over the whole PR (up to 12 requests); `a2` runs a planner, then one bounded investigation per suspect (up to about 26 requests per PR); `b0` makes one call on the diff, the Phase 1 baseline. A1 is the default because it matched A2's recall with higher precision and fewer requests in the Phase 2 evaluation (D5 in the [decision register](docs/decisions.md)). `pri eval run` still scores `b0` unless you pass `--reviewer`.
 
 It runs on Gemini's free tier. `.env.example` sets `PRI_LLM_MODEL=gemini-3.5-flash-lite`, the model the evaluation baseline uses (the code default is `gemini-3.8-flash`). Free-tier inputs may be used for training, so PR Investigator refuses to send a private repository's code to it.
 
@@ -30,7 +34,18 @@ uv run mypy
 
 ## Troubleshooting
 
-**`ModuleNotFoundError: No module named 'pr_investigator'` on macOS.** If the repository is inside an iCloud-synced folder (Desktop or Documents), iCloud marks files in `.venv` as hidden, and Python 3.13+ ignores hidden `.pth` files, which breaks the editable install. Move the repository elsewhere, or keep the environment in `venv.nosync/` with `.venv` as a symlink to it (see "macOS and iCloud" in [CLAUDE.md](CLAUDE.md)).
+### `ModuleNotFoundError: No module named 'pr_investigator'` on macOS
+
+Inside an iCloud-synced folder (Desktop or Documents), iCloud Drive sets the macOS `hidden` flag on everything in dot-folders such as `.venv`. Python 3.13+ skips hidden `.pth` files, and the editable install depends on one, so the package can't be imported. The test suite stops with this explanation when it detects the problem.
+
+- **Best fix:** keep the checkout outside synced folders (for example in `~/Developer`), then recreate the environment, since a virtualenv stores absolute paths: `rm -rf .venv && uv sync`.
+- **If the checkout must stay in a synced folder:** keep the environment in `venv.nosync/` (no leading dot, so it isn't synced or hidden) and make `.venv` a symlink to it:
+
+  ```bash
+  rm -rf .venv
+  UV_PROJECT_ENVIRONMENT=venv.nosync uv sync
+  ln -s venv.nosync .venv
+  ```
 
 ## Documentation
 

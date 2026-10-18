@@ -175,43 +175,64 @@ The planner receives the context pack, a review checklist per category, and the 
 - They are visible in the UI, including the refuted ones ("we checked X; it's fine because Y").
 - They allow per-stage evaluation: planner recall separately from investigator precision.
 
-The single-agent alternative is kept as ablation A1 ([evaluation.md](evaluation.md)).
+The single-agent alternative is kept as ablation A1 ([evaluation.md](evaluation.md)). In the Phase 2 evaluation, A1 matched A2's recall with higher precision and fewer requests on cases with one issue each, so A1 is the default for `pri review` (D5). The planner stays, and has to show its value on harder cases with several issues per PR.
+
+**As built in Phase 2** (`agent/planner.py`, prompt `planner.v1`). The planner sees exactly what B0 sees: the untrusted-tagged PR metadata and the line-numbered diff. Each suspect has a title, category, location (path, side, lines), the suspected problem, what would confirm or refute it, and a priority from 1 (most likely serious) to 10. Leads, links between them and dismissed leads arrive with Phase 3. Code then:
+
+- drops suspects whose path isn't a changed file the planner was shown (git's `a/` and `b/` prefixes are normalized first);
+- orders the rest by priority, keeping the planner's order for ties, and keeps the first 4 (D25);
+- records every dropped suspect with its reason.
+
+If nothing in the PR is reviewable (only lockfiles or binaries, for example), no request is made. A planner call that still fails after its one repair attempt fails the review, as a failed B0 call does.
 
 ### 4.7 Investigation (the agent loop)
 
-There is one investigator per hypothesis (or per cluster of hypotheses on the same lines), each in a fresh conversation.
+There is one investigator per hypothesis, each in a fresh conversation. (Clustering hypotheses on the same lines into one investigation may come later; in Phase 2, two investigations that confirm overlapping lines produce one finding, and the second is recorded as a duplicate.)
 
-- **Prompt layout**, ordered from stable to volatile so the prefix caches well: tool definitions, then the system prompt (role, evidence rules, injection policy, output protocol), then the context pack, then the hypothesis and its budget.
-- **Loop** (D4). The harness calls the model through the LLM interface (§7.1) and runs every requested tool call. The tools are read-only and therefore parallel-safe, so they run concurrently and all results go back together in one message. This repeats until the model calls `submit_verdict` or a budget runs out. History is append-only: earlier turns are never edited. That keeps prompt caches valid where a provider has them, and satisfies providers that only accept replayed reasoning in unedited conversations.
-- **Budgets** (D25). Initially at most 6 model turns per suspect. The harness also caps tool calls per turn and the size of each tool result, which bounds the tokens in each request, and it enforces a wall-clock timeout. Before the last turn, it tells the model to submit what it has, using `inconclusive` if the evidence is incomplete. A provider's native pacing feature (such as Claude's task budgets) can be used on top, never instead.
-- **Termination.** The prompt asks for `submit_verdict`. The harness doesn't rely on forcing a tool call, because not every provider supports it (current Claude models reject it). If a conversation ends without a verdict, the harness asks once more. After that it records the hypothesis as `inconclusive (no verdict)`. Verdict arguments are validated against the schema like any structured output.
-- **Stop reasons.** Adapters normalize each provider's stop reasons. Security discussions can trip a provider's safety filters. A `refused` stop is recorded and the hypothesis is marked as not investigated. The harness never rephrases a prompt to get around a refusal. When `max_tokens` cuts off a pending tool call, the input is discarded and the turn is retried with more room.
+The loop (`agent/loop.py`) is shared by both agentic reviewers: A2 investigates one suspect and ends with `submit_verdict`; A1 reviews the whole PR and ends with `report_findings` (§5).
+
+- **Prompt layout**, ordered from stable to volatile so the prefix caches well: tool definitions, then the system prompt (role, evidence rules, injection policy, output protocol), then the context pack, then the hypothesis and its budget. In Phase 2, A2's opening message holds the suspect, the planner's summary, the budget, the list of changed files, and the suspect's file diff. The diff is recorded in the ledger so it can be cited, and it starts at the suspect's hunk when the whole file doesn't fit in 8,000 characters. A1's opening holds the PR metadata and the diff rendered the way B0 renders it (up to 24,000 characters), with every diff line citable.
+- **Loop** (D4). Each turn sends one request through the LLM interface (§7.1) and appends the reply unchanged. If the reply calls tools, the harness runs them and sends all results back together. Phase 2 runs them in order, at most 3 per turn; extra calls get a "not run" result. History is append-only: earlier turns are never edited. That keeps prompt caches valid where a provider has them, and satisfies providers that only accept replayed reasoning in unedited conversations.
+- **Budgets** (D25). At most 6 model turns per suspect (12 for A1), at most 3 tool calls per turn, and about 4,000 characters per tool result, with hints on how to page for more. Together they bound the tokens in each request. Two turns before the end, the harness tells the model to submit now if it can, so a rejected submission can still be fixed. Before the last turn, it tells the model to submit what it has and to submit an inconclusive result rather than guess. A wall-clock timeout isn't implemented yet; the rate limiter and request caps bound a run instead. A provider's native pacing feature (such as Claude's task budgets) can be used on top, never instead.
+- **Submissions.** A call to the terminal tool is checked before any other call in the same turn runs, and only against what earlier turns showed. A submission therefore can't cite an observation it hasn't seen. Arguments are validated against the schema, then every evidence item goes through the mechanical check (§4.8). A rejected submission gets the exact errors back as its tool result, and other calls in that turn still run. An accepted one ends the loop, and the turn's other calls are not run. At most one submission per turn is considered.
+- **Termination.** The prompt asks for the terminal tool, and the harness never forces a tool call, because not every provider supports it (current Claude models reject it). A reply without a tool call gets a plain-text reminder while turns remain. When the turns run out without an accepted submission, the investigation ends inconclusive.
+- **Stop causes.** Each loop records why it ended: `submitted`, `turn_budget`, `refused` (the provider's safety filters declined; the harness never rephrases a prompt to get around a refusal), `max_tokens` (a reply was cut off at the output limit; the investigation ends inconclusive), or `error` (the provider rejected the conversation's request). An unusable reply, such as a malformed function call, uses up its turn and gets a reminder. Quota exhaustion, the request cap, a replay-cache miss and the data policy aren't outcomes of one investigation: they abort the run.
 - **Concurrency.** Phase 2 runs investigations one at a time. On the free tier, the rate limit, not concurrency, sets the pace, and sequential runs keep traces and replays simple. Parallel investigators, and the prompt-cache warm-up they would need, can come later if wall-clock time matters.
+- **Outcomes.** An accepted verdict's status is the outcome: `confirmed`, `refuted` or `inconclusive`. Anything else (turn budget, refusal, cut-off reply, error) ends inconclusive. Only a confirmed verdict whose evidence passed the check becomes a finding. Refuted and inconclusive results are kept in the run record, the report and the trace.
 
-Verdict schema (`submit_verdict`):
+Verdict schema (`submit_verdict`) as built in Phase 2:
 
 | Field | Meaning |
 |---|---|
 | `status` | `confirmed`, `refuted` or `inconclusive` |
-| `claim` | One-sentence statement of the problem |
-| `explanation` | Short markdown covering impact and trigger conditions |
+| `claim` | One-sentence statement of the problem, or of what was checked |
+| `explanation` | Impact and trigger conditions, or why it is fine or undecided |
 | `category`, `severity` | Values from fixed enums. Severity follows a written rubric. |
-| `confidence` | `high`, `medium` or `low`, with a rationale. Treated as a weak signal (§4.10). |
-| `evidence[]` | References to observations (§4.8), each with a role and a note |
-| `flow[]` | For data-flow issues: the ordered path from source through transformations to sink, each step an evidence reference |
-| `counter_evidence` | What would make this a false positive, and why it doesn't apply |
-| `suggested_fix` | Optional: prose and/or a replacement for the anchored lines |
-| `anchor` | File and line range in the diff where the comment should go |
+| `confidence` | `high`, `medium` or `low`. Treated as a weak signal (§4.10). |
+| `evidence[]` | References to observations (§4.8), each with a role and a note. A confirmed verdict needs at least one `defect_site`. |
+| `suggested_fix` | Optional: a short fix |
+
+The comment anchor is not a model field: the system takes it from the first verified defect site. Later phases may add `flow[]` (the ordered source-to-sink path for data-flow issues, each step an evidence reference) and `counter_evidence` (what would make this a false positive, and why it doesn't apply).
+
+A1's `report_findings` takes a summary and at most 4 findings with the same fields (minus `status`). Every finding needs a defect site, and if any finding fails the evidence check, the whole report is sent back.
 
 ### 4.8 Evidence model and grounding (deterministic)
 
 This is the core mechanism against hallucinated findings.
 
-- **The observation ledger.** Every tool call that returns repository content records **observations** in a ledger scoped to the investigation: `(observation_id, tool, path, ref [head|base], start_line, end_line, content_hash)`. A search records one observation per match. A search with no matches records an observation of the query, its scope and the empty result.
-- **Evidence is a reference, not text.** Each evidence item in a verdict names an `observation_id`, the path, a line sub-range and a role: `defect_site`, `source`, `sink`, `missing_guard`, `caller`, `test`, `config`, `search_negative` and so on.
-- **Validation.** An evidence item is rejected if its observation doesn't exist, if its line range isn't contained in what was observed, or if the content hash no longer matches the file at the analyzed commit.
+- **The observation ledger** (`agent/ledger.py`). Every tool call that returns repository content records **observations** in a ledger scoped to the investigation: `(observation_id, tool, path, ref [head|base], start_line, end_line, content_hash)`. Ids run O1, O2, ... and are listed above each tool result, so the model can cite them. A search records one observation of the query and its total match count, plus one per displayed group of lines (a match and its context). A search with no matches records only the query observation, which is what `absence` evidence cites. `get_diff` records the head lines it showed and, where it showed deleted lines, the base lines too. Diff text in an opening message is recorded the same way.
+- **Exactly what was shown.** Tools cut their output to the character budget on line, group or hunk boundaries, and an observation covers only the lines actually displayed. The content hash is taken over the full text of those lines, even when a very long line was shortened on screen. Tests check that every observation matches the displayed output.
+- **Evidence is a reference, not text.** Each evidence item names an `observation_id`, the path, a line sub-range, a role and a note. Phase 2 has three roles: `defect_site` (where the problem is), `context` (supporting code anywhere) and `absence` (a search that found nothing). Finer roles (`source`, `sink`, `caller`, `test`, ...) may come later.
+- **Validation** (`agent/evidence.py`, no LLM). An evidence item is rejected if:
+  - its observation isn't in this investigation's ledger;
+  - its type doesn't fit the observation (line evidence needs a line observation of the same file; `absence` needs a search with zero matches);
+  - its range isn't inside what was observed, or spans more than 60 lines;
+  - the observed lines no longer hash to what was shown, at the analyzed commit.
+
+  A submission may cite at most 10 items. Each error names the item and says how to fix it.
+- **Tolerating harmless slips.** The live runs showed the model losing confirmed results to formatting, not judgment. So enum values (roles, statuses, categories, severities, confidence) are matched case-insensitively, and line evidence that gives only one end of its range cites that single line, the narrowest reading. An unknown value is still rejected, and every citation is still checked against the observation and re-read from the repository. The tool schema lists `path`, `start_line` and `end_line` as required keys (null only for absence), though Gemini doesn't enforce function-call schemas.
 - **System-extracted snippets.** The snippets shown to the verifier and the human are **extracted from the repository by the system**, never copied from model text. A misquoted line can't reach a reviewer.
-- **Requirements for a confirmed verdict.** It needs at least one valid `defect_site` evidence item and an anchor on a commentable line. An absence claim such as "no authorization check" needs positive evidence of the code path that was read, plus the searches that came back empty.
+- **Requirements for a confirmed verdict.** It needs at least one valid `defect_site` on lines the PR diff shows: added or unchanged lines of a hunk at the head (side RIGHT), or deleted lines at the base (side LEFT), within one hunk. The first valid defect site becomes the comment anchor, on the file's path in the PR, even for a renamed file's old lines. An absence claim such as "no authorization check" needs positive evidence of the code path that was read, plus the searches that came back empty. In Phase 2, the defect-site rule enforces the first part; the absence evidence is up to the model.
 
 Grounding proves that the cited code exists and that the agent looked at it. It doesn't prove that the code means what the claim says. That is the verifier's job, and ultimately the human's.
 
@@ -291,18 +312,20 @@ Rules that apply to every tool:
 
 - **Typed, read-only, no shell** (D6). Typed tools let the harness confine paths, record observations, bound output and show each call clearly in the trace. A shell would give the agent more freedom but give the harness only an opaque command string.
 - **Confined to the worktree.** All paths resolve inside the run's worktree. Symlinks pointing outside are refused, as are binary and oversized files.
-- **Bounded, predictable output.** Results are line-numbered and deterministically ordered, bounded (for example, at most 400 lines or about 8k tokens), and state when they were truncated and how to page.
+- **Bounded, predictable output.** Results are line-numbered and deterministically ordered, bounded by a character budget (4,000 characters per result in the agent loop; `read_file` also shows at most 400 lines), and state when they were cut short and how to page: `start_line` for `read_file`, `start_hunk` for `get_diff`, a narrower `path_glob` for `search_code`.
+- **Exact observations.** A tool records observations only for the lines it displayed (§4.8).
+- **Untrusted output.** The loop wraps every tool result in `<untrusted-...>` tags whose name includes a hash of the content, so the content can't close its own block ([security.md](security.md) §5.1).
 - **Errors** come back as error results with actionable messages. Tool inputs are validated against their schemas before a tool runs, with strict schema mode used where the provider supports it.
 - **Descriptions say *when* to use a tool,** not just what it does.
 
 | Tool | Purpose | Backed by | Phase |
 |---|---|---|---|
-| `get_diff(path?)` | The PR diff with old and new line numbers | Local diff | 1 |
-| `read_file(path, start, end, ref)` | Read a line range from head or base | Worktree / git objects | 1 |
-| `search_code(pattern, mode, glob, context, ref)` | Literal or regex search | ripgrep (`--json`) | 1 |
-| `list_directory(path)` | Bounded tree listing | Worktree | 1 |
-| `submit_verdict(...)` | Terminal tool that returns the structured verdict | — | 2 |
-| `report_findings(...)` | Terminal tool for the single-agent reviewer (A1): up to 4 findings, each with evidence | — | 2 |
+| `get_diff(path?, start_hunk)` | The PR diff with old and new line numbers, for one file or the whole PR | Local diff | 1 |
+| `read_file(path, start_line, end_line, ref)` | Read a line range from head or base | Worktree / git objects | 1 |
+| `search_code(pattern, regex, path_glob, context_lines, max_results, case_sensitive)` | Literal or regex search at the head | ripgrep (`--json`) | 1 |
+| `list_directory(path, max_entries)` | Bounded tree listing | Worktree | 1 |
+| `submit_verdict(...)` | Terminal tool for an investigation (A2): the verdict and its evidence (§4.7) | — | 2 |
+| `report_findings(...)` | Terminal tool for the single-agent reviewer (A1): a summary and up to 4 findings, each with evidence | — | 2 |
 | `find_symbol(name, kind?)` | Where is X defined? | Symbol index | 3 |
 | `find_references(symbol)` | Call sites and usages. Results say whether they're name-based or precise. | Reference index (LSP in S2) | 3 |
 | `get_symbol_context(path, line)` | Enclosing function or class, signature, decorators, direct callers and callees | Symbol index | 3 |
@@ -380,7 +403,7 @@ The pipeline talks to one small internal interface, never to a vendor SDK (D2, D
 - **Request:**
   - system prompt
   - messages (user, assistant, tool results)
-  - optional tool specs (name, description, JSON schema)
+  - optional tool specs (name, description, JSON schema); a request uses tools or an output schema, not both
   - optional output schema (a Pydantic model)
   - max output tokens
   - a reasoning-effort hint (`low`, `medium`, `high`) that each adapter maps to its provider's setting or ignores
@@ -388,8 +411,9 @@ The pipeline talks to one small internal interface, never to a vendor SDK (D2, D
   - text
   - the validated output object, when a schema was given
   - tool calls
-  - a normalized stop reason: `end`, `tool_use`, `max_tokens`, `refused` or `error`
+  - a normalized stop reason: `end`, `tool_use`, `max_tokens`, `refused` or `error`, plus the provider's detail for refusals and errors
   - token usage
+  - opaque replay data (`provider_data`): the provider's own record of an assistant turn, replayed unchanged on later requests. Gemini needs this for thought signatures. Only the adapter that produced it reads it.
   - provider and model IDs
   - the raw payload, for the trace
 - **Capabilities.** Each adapter declares what its provider supports: native structured output, tool calling, parallel tool calls, prompt caching, context window, and whether the provider may train on submitted data.
@@ -397,7 +421,8 @@ The pipeline talks to one small internal interface, never to a vendor SDK (D2, D
 Rules that keep the pipeline provider-neutral:
 
 - **Structured output always comes back validated.** If a provider can't enforce a schema natively, the adapter asks for JSON, validates it with Pydantic and retries once with the validation error. The pipeline sees either a valid object or a typed failure.
-- **Budgets are enforced by the harness** (turns, tool calls, tokens, wall-clock time). They are never delegated to a provider feature.
+- **Budgets are enforced by the harness** (turns, tool calls per turn, tool output size, requests per run). They are never delegated to a provider feature.
+- **Tool results go back as data.** Gemini receives them as `function_response` parts in a user turn (it rejects a `tool` role), merged with any reminder that follows. Call ids we generate are never sent. Automatic function calling in the SDK is always disabled.
 - **Provider extras are optional.** Features such as prompt caching are used when an adapter declares them, and the pipeline works without them.
 - **Conversations are append-only** with every provider. That's the simplest model to reason about, and some providers' caching and reasoning rules require it.
 
@@ -434,7 +459,8 @@ Zero-spend guards:
 |---|---|---|---|
 | Baseline reviewer (B0, B1) | Single call | medium | Structured output |
 | Planner | Single call | medium | Structured output |
-| Investigator | Tool loop | medium | `submit_verdict` tool call |
+| Investigator (A2) | Tool loop | medium | `submit_verdict` tool call |
+| Single agent (A1) | Tool loop | medium | `report_findings` tool call |
 | Skeptic verifier | Short tool loop | high | Structured output |
 | Dedupe and summary | Single call | low | Structured output |
 | Eval judge | Single call | low | Structured output |
@@ -460,6 +486,8 @@ Free-tier limits change often and aren't guaranteed. Check the provider's consol
 
 Prompts are versioned template files. Each run records the provider, model IDs, effort hints, prompt versions, tool versions and index versions. Free-tier models change without notice, so results always name the exact model ID that produced them.
 
+Phase 2's prompts are `planner.v1`, `investigator.v3`, `single_agent.v3` and `agent_loop.v2`. Earlier versions stay in the repository: v2 of the investigator and single-agent prompts added a complete evidence example after the live smoke review lost its verdict to a malformed citation; v3 shows null line keys for absence items; `agent_loop.v2` adds the two-turns-left note. The last holds the loop's own messages to the model (reminders, the last-turn note, submission accepted or rejected), so changing them also changes a recorded prompt version. Agentic runs record each prompt's id and SHA-256; eval runs also record the commit of the PR Investigator checkout and whether it had uncommitted changes.
+
 ## 8. GitHub integration
 
 - **GitHub App** (D14), rather than a personal token, an OAuth App or a GitHub Action. It gives fine-grained permissions, short-lived installation tokens, webhooks and a bot identity. A personal token (`gh auth token`) is supported only for local development.
@@ -480,7 +508,7 @@ Prompts are versioned template files. Each run records the provider, model IDs, 
 
 ## 9. Data model
 
-From Phase 3, everything lives in Postgres (D10). Phase 1 writes each run as JSON files under `.pri/runs/`. Domain objects are typed models in code. JSONB holds stage outputs and verdicts, whose shape evolves quickly.
+From Phase 3, everything lives in Postgres (D10). Until then, each run is files under `.pri/runs/<run id>/`: `run.json` (the full result: findings with their evidence and, for agentic reviewers, suspects, investigations, outcomes, budgets and request counts), `review.md`, and for A1 and A2 `trace.jsonl`. Domain objects are typed models in code. JSONB holds stage outputs and verdicts, whose shape evolves quickly.
 
 | Table | Key contents | Notes |
 |---|---|---|
@@ -514,6 +542,7 @@ Every row belongs to one installation, directly or through its parent, and every
 ## 10. Observability and cost accounting
 
 - **Traces.** `trace_event` rows are the primary observability tool *and* a product feature (the trace view). Every LLM call records provider, model, input and output tokens (plus cache tokens where the provider reports them), latency, effort hint, stop reason, and cost (zero on free tiers).
+- **Traces in Phase 2** (`trace.py`). Until the database exists, an agentic run writes one JSONL event per line, flushed as it happens, so a crash leaves a readable trace that ends in an `error` event. Events cover the run, the plan (suspects kept and dropped), each investigation's opening, every model turn (text, tool calls, tokens, stop reason, cached or not), every tool result (full text and observation ids), reminders, submissions with their evidence errors, why each loop stopped, outcomes, and the final findings with snippets. Provider replay data isn't copied into traces; the response cache holds what's needed to replay a run. `pri show <run>` renders a trace as a timeline, with `--full` for complete model text and tool output. Everything printed is escaped, because traces contain untrusted text.
 - **Rollups.** Run-level cost, latency and outcomes appear in the UI.
 - **Logs.** Structured JSON logs carry run and investigation IDs. Secrets and tokens are never logged.
 - **Optional export** (S8). OpenTelemetry export using the GenAI semantic conventions, for example to Langfuse or Phoenix.
@@ -548,33 +577,35 @@ Every row belongs to one installation, directly or through its parent, and every
 
 ## 13. Repository structure
 
-As of Phase 1. Modules are flat until they grow. Later phases add `agent/`, `indexing/`, `retrieval/`, `analyzers/`, `storage/`, `security/`, `web/` and `docker/`.
+As of Phase 2. Modules are flat until they grow. Later phases add `indexing/`, `retrieval/`, `analyzers/`, `storage/`, `security/`, `web/` and `docker/`.
 
 ```text
 pr-investigator/
-├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml            # uv-managed; ruff, mypy and pytest configuration
 ├── uv.lock
 ├── .env.example              # GEMINI_API_KEY etc.; copy to .env (gitignored)
 ├── .github/workflows/ci.yml  # lint, types, tests; no secrets, no live API calls
 ├── src/pr_investigator/
-│   ├── cli.py                # `pri` review | eval list/validate/run | doctor
+│   ├── cli.py                # `pri` review | show | eval list/validate/run | doctor
 │   ├── config.py             # settings from env and .env
 │   ├── domain.py             # ReviewTarget, Finding, Anchor, enums
 │   ├── diff.py               # diff parser, commentable lines, line-numbered rendering
 │   ├── workspace.py          # hardened git: mirrors, worktrees, merge base, diff
 │   ├── github.py             # PR references, PR metadata over REST
 │   ├── ingest.py             # ReviewTarget + Workspace from a GitHub PR or local refs
-│   ├── tools/                # read-only tools and path confinement
+│   ├── trace.py              # JSONL run traces and their rendering for `pri show`
+│   ├── tools/                # read-only tools, output budgets, path confinement
+│   ├── agent/                # ledger, evidence check, loop, verdicts, planner, A2, A1
 │   ├── llm/                  # LLMClient, types, Gemini/fake adapters, cache, guards, factory
-│   ├── prompts/              # versioned prompt files (baseline_review.v1.md, judge.v1.md)
-│   ├── review/               # baseline reviewer (B0) and run reports
+│   ├── prompts/              # versioned prompts: baseline_review, judge, planner,
+│   │                         #   investigator, single_agent, agent_loop
+│   ├── review/               # B0, the shared reviewer entry point, run reports
 │   └── evaluation/           # cases, materialization, matching, metrics, runner
 ├── evals/
 │   ├── fixtures/             # base projects the cases change (inventory_service)
 │   ├── cases/                # case manifests (YAML)
-│   └── results/              # committed summary reports
+│   └── results/              # committed results; agentic runs add traces/
 ├── tests/                    # unit/, integration/, live/ (opt-in), support.py
 └── docs/
 ```

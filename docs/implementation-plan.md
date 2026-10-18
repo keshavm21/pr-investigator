@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Status (2026-10-06):** Phase 1 is complete: merged, B0 baseline committed, CI green. Phase 2's plan below is under review; implementation hasn't started. No phase starts until it is approved.
+> **Status (2026-10-18):** Phase 1 is complete: merged, B0 baseline committed, CI green. Phase 2 is implemented and evaluated: on the 10 cases (2 samples), A2 reached 86% precision and 100% recall, A1 100% and 100%, against B0's 100% and 67%, with every reported finding backed by verified evidence ([results](../evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)). D5 is decided: A1 is the default for `pri review`, and A2 stays available. Next: merging Phase 2. No phase starts until it is approved.
 
 The order follows risk. The most uncertain question is whether agentic investigation produces precise, evidence-backed findings at acceptable cost, so it gets built and measured first. GitHub App plumbing and the UI are well-understood engineering and come later.
 
@@ -154,6 +154,31 @@ A2 and A1 can run on different days to stay inside 500 requests/day.
 - Offline tests cover the loop, the evidence check and the adapter, including scripted end-to-end runs on real eval cases.
 - The A1 and A2 results, and a comparison with B0, are committed.
 - Requests and tokens per PR are measured.
+
+**Progress**
+
+| Step | Content | State |
+|---|---|---|
+| 1 | LLM layer: tool calling, replay data, the warning fix, the rate-limit message | Done; live tool-call check passed (2 requests) |
+| 2 | Tool output budgets with exact observations, the ledger, the evidence check | Done |
+| 3 | The agent loop and `submit_verdict` | Done |
+| 4 | Planner, A2, A1 and their prompts | Done |
+| 5 | `pri review --reviewer`, traces, `pri show`, evidence in reports | Done |
+| 6 | Eval runner and metrics, end-to-end tests on real cases | Done |
+| 7 | Full offline checks; docs aligned with the code | Done |
+| 8 | Live runs, each approved separately: A2 smoke review, A2 and A1 evals, fixes for submission formatting, final 2-sample runs; then the comparison | Done ([results](../evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)) |
+| 9 | Decide D5: A1 becomes the default for `pri review`, A2 stays available (2026-10-18); merge Phase 2 into `main` | D5 done; merge next |
+
+Choices made while building, beyond the decisions above (details in [architecture.md](architecture.md) §4.6–4.8):
+
+- A submission is checked before the same turn's other tool calls run, and only against what earlier turns showed.
+- `max_tokens` ends an investigation (inconclusive) instead of retrying with more room.
+- Refuted and inconclusive verdicts need no evidence, but any evidence they cite must pass the check.
+- The anchor comes from the first verified defect site, not from the model. The verdict schema has no `flow` or `counter_evidence` yet.
+- A confirmed finding that overlaps one already reported is recorded as a duplicate, not reported twice. The eval's one-to-one matching would otherwise count it as a false positive.
+- A1 reports at most 4 findings, like A2's one per suspect. A failing finding sends the whole report back.
+- A1's opening diff is capped at 24,000 characters (it is resent on every turn), and A2's opening shows the suspect's file diff up to 8,000 characters.
+- `pri review` caps real provider requests at 30 by default. Evals keep their default of 50, so agentic eval runs pass `--max-requests` explicitly.
 
 **Main risks**
 

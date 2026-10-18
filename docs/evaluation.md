@@ -1,6 +1,6 @@
 # Testing and Evaluation
 
-> **Status: proposed, under review (2026-10-03).**
+> **Status (2026-10-12):** the harness runs B0 (Phase 1) and the agentic reviewers A1 and A2 (Phase 2). Sections marked as later phases describe planned work.
 
 This document covers two questions:
 
@@ -15,7 +15,7 @@ This document covers two questions:
 |---|---|---|
 | Unit | Diff parsing and the commentable-line map; path confinement; tool output formatting and truncation; chunking; symbol extraction; evidence grounding; anchoring; rendering and sanitizing; config loading (base branch only); budget logic | pytest. Hypothesis property tests for diff and anchor mapping. Golden files for chunks and symbols. |
 | Integration | Postgres repositories and migrations; git workspace operations; the GitHub client; the flow from webhook to job to run to publish | A Postgres service container; fixture repositories generated in temporary directories; mocked HTTP (respx) |
-| Agent orchestration | Loop mechanics, parallel tool calls, budget cut-offs, a missing verdict, `refusal` and `max_tokens` stop reasons, rejection of invalid evidence | A scripted fake LLM that returns predetermined tool calls |
+| Agent orchestration | Loop mechanics, append-only history, the per-turn tool-call cap, budget cut-offs and the last-turn note, a missing verdict, `refused`, `max_tokens` and error stops, run-aborting quota errors, rejection of invalid evidence, the planner cut, end-to-end A2 and A1 runs on real eval cases | A scripted fake LLM that returns predetermined tool calls, over real git repositories |
 | Record/replay | Prompt rendering and response parsing against real model output, at no cost | Recorded API responses keyed by a request hash. Re-recorded deliberately when prompts change. |
 | Security | Injection fixtures (output assertions), path traversal, the sanitizer, webhook signatures, UI authorization | See [security.md](security.md) §6 |
 | End-to-end (manual or nightly) | A real GitHub test repository and real APIs, posting to a sandbox PR | Manual dispatch only |
@@ -38,9 +38,11 @@ Each reported finding is one of:
 | FP per clean PR | False positives on PRs with no known issues | Noise in normal use |
 | Decoy trigger rate | Share of decoys flagged | Directly tests "investigate before claiming" |
 | Localization | Anchor within the ground-truth range (±3 lines) | Comments must land in the right place |
-| Evidence validity | Share of findings whose evidence supports the claim (LLM judge, spot-checked by hand) | Tests the evidence model, not only the verdict |
+| Verified evidence | Share of reported findings with a mechanically verified defect site (agentic reviewers) | Must be 100%: a reported finding without verified evidence is a bug |
+| Evidence validity | Share of findings whose evidence supports the claim (LLM judge, spot-checked by hand; later phases) | Tests the evidence model, not only the verdict |
 | Verifier effect | FPs removed versus TPs removed | The verifier's real cost |
-| Cost and latency | Cost per PR, cost per true positive, p50/p95 latency, tool calls per investigation | Feasibility |
+| Cost and latency | Requests and tokens per PR (mean and maximum), cost per PR, cost per true positive, p50/p95 latency, turns and tool calls | Feasibility on a free quota |
+| Investigation outcomes | Suspects investigated and dropped; confirmed, refuted and inconclusive outcomes; why each loop stopped; submissions the evidence check rejected; duplicate confirmations | Shows where the agent spends its budget and where it fails |
 | Reliability | Refusal rate, failed-run rate | Operational health |
 
 **Online metrics** come from real usage:
@@ -111,7 +113,7 @@ The judge runs on the configured free model. A judge from a different model fami
 | B0 | Single call, diff only | Baseline |
 | B1 | Single call, diff plus the deterministic context pack | Value of non-agentic context |
 | A1 | One agent loop with all tools, no planner | Value of the planner |
-| A2 | Planner plus parallel investigators, no verifier | Value of agentic investigation over B1 |
+| A2 | Planner plus one investigation per suspect (sequential in Phase 2), no verifier | Value of agentic investigation over B1 (in Phase 2, over B0) |
 | A3 | A2 plus verifier (the full pipeline) | Value of verification |
 | A3−sem | A3 without semantic search and convention leads | Value of semantic retrieval |
 | A3+LSP | A3 with precise references (S2) | Value of precise code intelligence |
@@ -126,10 +128,10 @@ Effort levels and, if D3 allows, cheaper models per stage are tested as further 
 
 ### 2.6 Running evals
 
-- `pri eval run --suite core --config A3 --reps 3` writes per-run JSONL and a `summary.md` under `evals/results/`.
+- `pri eval run --reviewer b0|a2|a1 --samples N --no-judge --max-requests N` writes `results.jsonl`, `summary.json` and `summary.md` under `evals/results/<time>-<reviewer>-<model>/`. A1 and A2 also write one trace per case and sample to `traces/<case>-s<sample>.jsonl`, readable with `pri show`. (Later phases add more configurations, such as A3.)
 - During development, use a subset of 5–10 cases with 1 repetition.
-- Responses are cached by a hash of the request, so re-scoring results or regenerating a report never spends quota again.
-- Every eval run records the git SHA, configuration, provider, exact model ID, prompt versions, and request and token counts. A request cap aborts the run when reached.
+- Responses are cached by a hash of the request, so re-scoring results or regenerating a report never spends quota again. A rerun from the cache writes its traces again.
+- Every eval run records the reviewer, provider, exact model ID, each prompt's id and SHA-256, the agent budget, the commit of the PR Investigator checkout and whether it had uncommitted changes (result folders under `evals/results/` don't count), review requests (and how many came from the cache), real provider requests (retries and judge calls included), and tokens. A request cap stops the run cleanly when reached.
 - A client-side rate limiter keeps requests within the provider's per-minute quotas. Runs pause and resume on HTTP 429 errors rather than failing.
 - Live evals consume free-tier quota, and would cost money on a paid provider. Run them on purpose, never automatically in CI and never for fork PRs.
 

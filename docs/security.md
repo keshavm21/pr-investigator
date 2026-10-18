@@ -65,7 +65,13 @@ An attacker might use injection to:
 Mitigations:
 
 1. **Nothing to hijack.** The agent's tools only read. There is no shell, network or write access. Publishing is a separate component behind human approval.
-2. **One instruction channel.** Instructions come only from our system prompt and from mid-conversation system messages. Repository content arrives inside tool results, delimited and labelled untrusted.
+2. **One instruction channel.** Instructions come only from our system prompt and from the harness's own messages. Repository content arrives inside tool results, delimited and labelled untrusted.
+
+   As built in Phase 2:
+   - Every tool result, and the diff and changed-file list in an opening message, is wrapped in `<untrusted-LABEL-HASH>` tags. HASH is derived from the content, so the content can't forge the closing tag.
+   - The observation ids listed above a result sit outside the block, so the file paths in them are escaped: control and invisible formatting characters (newlines, bidi overrides, zero-width characters) are shown as escapes and can't start a new line or hide text.
+   - The harness's reminders are fixed texts from a versioned prompt (`agent_loop.v1`). Evidence-check errors quote paths escaped the same way.
+   - The investigator and single-agent prompts tell the model to treat tagged content as data. The investigator mentions text aimed at AI reviewers in its explanation; the single agent reports it as a security finding.
 
    Agent instruction files in the target repository (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, Copilot instructions and similar) are never loaded as instructions. When a PR changes one of them, it is reviewed as code and flagged.
 3. **Behaviour-changing configuration comes from the base branch only** (D16). This covers `.pr-investigator.yml`, ignore paths and `.gitattributes`-based exclusions.
@@ -79,6 +85,8 @@ Mitigations:
 8. **Output constraints** (§5.4).
 
 **Residual risk.** Injected text can still bias the agent toward missing an issue. The human gate and the visible list of refuted hypotheses reduce this risk but don't eliminate it. The security eval suite measures how often it happens (§6).
+
+One path is specific to A2: the planner writes each suspect from untrusted PR content, and the suspect's text reaches the investigator as its task, outside the untrusted tags. Injected text could shape a suspect's framing ("already checked; refute it"). The investigator prompt says suspects may be wrong and must be judged by the code, and refuted suspects stay visible to the human.
 
 ### 5.2 Code execution
 
@@ -121,6 +129,7 @@ Everything the LLM writes is untrusted output.
 - **Secret scanning.** Outgoing text is scanned (known patterns plus entropy) and blocked or redacted on a match. A committed secret becomes its own finding, with the value redacted.
 - **Suggestion blocks** may only replace the anchored lines, and the patched file must still parse. The UI shows the suggestion as a diff, with a warning, before approval.
 - **The review UI** escapes or sanitizes all repository text and LLM output to prevent XSS.
+- **Local outputs (Phase 2).** Evidence snippets are re-read from the repository at the analyzed commit, never taken from model output. In `review.md`, each snippet sits in a code fence longer than any run of backticks inside it, so repository text can't end the block. `pri show` escapes control characters in everything it prints, so a trace can't carry terminal escape sequences to the screen.
 
 ### 5.5 Credentials
 
@@ -143,6 +152,7 @@ Everything the LLM writes is untrusted output.
   - daily budget per installation
   - concurrency
   - subprocess run time
+- **Agent budgets (Phase 2).** Turns per investigation, tool calls per turn, characters per tool result, at most 4 suspects per PR, and a cap on real provider requests per review (`--max-requests`, default 30) and per eval run.
 - **Safe regexes.** ripgrep's default regex engine matches in linear time, so agent-supplied patterns can't cause catastrophic backtracking. PCRE2 mode stays disabled.
 - **Hiding a change in a huge PR** triggers a partial review, and the review summary carries an explicit "not reviewed" list. Signals that reduce coverage are read from the base branch only.
 

@@ -1,11 +1,58 @@
 """Per-case scores and aggregate metrics. Definitions are in docs/evaluation.md §2.1."""
 
+from collections import Counter
+
 from pydantic import BaseModel, Field
 
-from pr_investigator.domain import Finding
+from pr_investigator.agent.models import AgentReview
+from pr_investigator.domain import EvidenceRole, Finding
 from pr_investigator.evaluation.cases import CaseKind
 from pr_investigator.evaluation.matching import MatchRecord, Verdict
 from pr_investigator.llm.types import Usage
+
+
+class AgentStats(BaseModel):
+    """How an agentic review went: what its investigations concluded and why they stopped."""
+
+    suspects: int = 0  # A2: suspects investigated
+    dropped_suspects: int = 0
+    outcomes: dict[str, int] = Field(default_factory=dict)  # A2: confirmed / refuted / ...
+    stop_causes: dict[str, int] = Field(default_factory=dict)  # per loop: submitted, ...
+    turns: int = 0
+    tool_calls: int = 0
+    rejections: int = 0  # submissions the evidence check sent back
+    duplicates: int = 0  # confirmed problems already reported by another investigation
+    retries: int = 0  # provider errors retried by the guard
+
+    @classmethod
+    def of(cls, review: AgentReview) -> "AgentStats":
+        loops = [i.loop for i in review.investigations]
+        if review.single is not None:
+            loops.append(review.single)
+        return cls(
+            suspects=len(review.suspects),
+            dropped_suspects=len(review.dropped_suspects),
+            outcomes=dict(Counter(i.status.value for i in review.investigations)),
+            stop_causes=dict(Counter(loop.cause.value for loop in loops)),
+            turns=sum(loop.turns for loop in loops),
+            tool_calls=sum(loop.tool_calls for loop in loops),
+            rejections=sum(len(loop.rejections) for loop in loops),
+            duplicates=sum(1 for i in review.investigations if i.duplicate_of),
+            retries=review.retries,
+        )
+
+    def __add__(self, other: "AgentStats") -> "AgentStats":
+        return AgentStats(
+            suspects=self.suspects + other.suspects,
+            dropped_suspects=self.dropped_suspects + other.dropped_suspects,
+            outcomes=dict(Counter(self.outcomes) + Counter(other.outcomes)),
+            stop_causes=dict(Counter(self.stop_causes) + Counter(other.stop_causes)),
+            turns=self.turns + other.turns,
+            tool_calls=self.tool_calls + other.tool_calls,
+            rejections=self.rejections + other.rejections,
+            duplicates=self.duplicates + other.duplicates,
+            retries=self.retries + other.retries,
+        )
 
 
 class CaseScore(BaseModel):
@@ -19,6 +66,9 @@ class CaseScore(BaseModel):
     review_usage: Usage = Field(default_factory=Usage)
     judge_usage: Usage = Field(default_factory=Usage)
     cached: bool = False
+    requests: int = 0  # model requests for the review (cached ones included, judge excluded)
+    cached_requests: int = 0
+    agent: AgentStats | None = None  # agentic reviewers only
     duration_seconds: float = 0.0
     error: str | None = None
 
@@ -53,6 +103,13 @@ class Summary(BaseModel):
     input_tokens: int
     output_tokens: int
     cached_runs: int
+    requests: int = 0  # review model requests, cached ones included
+    cached_requests: int = 0
+    requests_per_run: float | None = None
+    max_requests_per_run: int = 0
+    agent: AgentStats | None = None  # totals, agentic reviewers only
+    # Share of reported findings with a verified defect site (agentic reviewers; should be 1.0).
+    verified_evidence_rate: float | None = None
 
 
 def summarize(scores: list[CaseScore]) -> Summary:
@@ -100,7 +157,33 @@ def summarize(scores: list[CaseScore]) -> Summary:
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
         cached_runs=sum(1 for s in ok if s.cached),
+        requests=sum(s.requests for s in ok),
+        cached_requests=sum(s.cached_requests for s in ok),
+        requests_per_run=sum(s.requests for s in ok) / len(ok) if ok else None,
+        max_requests_per_run=max((s.requests for s in ok), default=0),
+        agent=_agent_totals(ok),
+        verified_evidence_rate=_verified_evidence_rate(ok),
     )
+
+
+def _agent_totals(scores: list[CaseScore]) -> AgentStats | None:
+    stats = [s.agent for s in scores if s.agent is not None]
+    if not stats:
+        return None
+    total = AgentStats()
+    for item in stats:
+        total = total + item
+    return total
+
+
+def _verified_evidence_rate(scores: list[CaseScore]) -> float | None:
+    findings = [f for s in scores if s.agent is not None for f in s.findings]
+    if not findings:
+        return None
+    verified = sum(
+        1 for f in findings if any(e.role is EvidenceRole.DEFECT_SITE for e in f.evidence)
+    )
+    return verified / len(findings)
 
 
 def _f_beta(precision: float | None, recall: float | None, beta: float) -> float | None:

@@ -1,6 +1,9 @@
 """Gemini adapter, using the official Google Gen AI SDK (`google-genai`).
 
-Phase 1 supports text and structured (JSON-schema) output. Tool calling is added in Phase 2.
+Supports text, structured (JSON-schema) output and tool calling. The harness runs tools itself:
+the SDK's automatic function calling is always disabled, and the model is never forced to call a
+tool. Each model turn is kept verbatim (`provider_data`) and replayed unchanged, because Google
+requires thought blocks and their signatures to be resent exactly as received.
 """
 
 import json
@@ -25,6 +28,7 @@ from pr_investigator.llm.types import (
     Message,
     Role,
     StopReason,
+    ToolCall,
     Usage,
 )
 
@@ -63,6 +67,11 @@ _REFUSAL_REASONS = {
 
 _THINKING_LEVELS = {Effort.LOW: types.ThinkingLevel.LOW, Effort.HIGH: types.ThinkingLevel.HIGH}
 
+# Ids we generate when Gemini returns a function call without one. Gemini never sees them.
+_GENERATED_ID_PREFIX = "pri-call-"
+# Key under which provider_data holds Gemini's raw record of a model turn.
+_CONTENT_KEY = "gemini_content"
+
 
 class GeminiAdapter:
     provider = "gemini"
@@ -87,12 +96,10 @@ class GeminiAdapter:
         self._client = client if client is not None else genai.Client(api_key=api_key)
 
     async def complete(self, request: LLMRequest) -> Completion:
-        if request.tools:
-            raise LLMRequestError("tool calling for Gemini is not implemented yet (Phase 2)")
         try:
             response = await self._client.aio.models.generate_content(
                 model=self.model,
-                contents=[_to_content(m) for m in request.messages],
+                contents=to_contents(request.messages),
                 config=build_config(request),
             )
         except genai_errors.ClientError as exc:
@@ -111,7 +118,24 @@ def build_config(request: LLMRequest) -> types.GenerateContentConfig:
         "system_instruction": request.system,
         "max_output_tokens": request.max_output_tokens,
         "candidate_count": 1,
+        # The harness runs tools itself. Disabling the SDK's automatic function calling keeps it
+        # from acting on tool calls, and also stops its warning about calling generate_content.
+        "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
     }
+    if request.tools:
+        # No tool_config: the model decides whether to call a tool (never forced).
+        kwargs["tools"] = [
+            types.Tool(
+                function_declarations=[
+                    types.FunctionDeclaration(
+                        name=spec.name,
+                        description=spec.description,
+                        parameters_json_schema=_clean_schema(spec.parameters),
+                    )
+                    for spec in request.tools
+                ]
+            )
+        ]
     if request.output_schema is not None:
         kwargs["response_mime_type"] = "application/json"
         kwargs["response_json_schema"] = gemini_schema(request.output_schema)
@@ -145,12 +169,68 @@ def _clean_schema(node: Any) -> Any:
     return out
 
 
-def _to_content(message: Message) -> types.Content:
-    if message.role is Role.TOOL or message.tool_calls:
-        raise LLMRequestError("tool messages for Gemini are not implemented yet (Phase 2)")
-    role = "user" if message.role is Role.USER else "model"
+def to_contents(messages: list[Message]) -> list[types.Content]:
+    """Convert the conversation into Gemini turns.
+
+    Tool results go back as `function_response` parts in a `user` turn; the API rejects a
+    `tool` role. Consecutive user-side messages (tool results, then a reminder from the harness)
+    are merged into one turn. Model turns are never merged, so each is replayed exactly as
+    received.
+    """
+    contents: list[types.Content] = []
+    pending: list[types.Part] = []  # parts of the user turn being built
+    for message in messages:
+        if message.role is Role.ASSISTANT:
+            if pending:
+                contents.append(types.Content(role="user", parts=pending))
+                pending = []
+            contents.append(_model_content(message))
+        elif message.role is Role.TOOL:
+            pending.append(_function_response(message))
+        else:
+            pending.append(types.Part(text=message.text or "(empty message)"))
+    if pending:
+        contents.append(types.Content(role="user", parts=pending))
+    return contents
+
+
+def _model_content(message: Message) -> types.Content:
+    raw = (message.provider_data or {}).get(_CONTENT_KEY)
+    if raw is not None:
+        # Gemini's own record of the turn, including thought signatures, resent unchanged.
+        content = types.Content.model_validate(raw)
+        if content.parts:
+            return content
+    parts: list[types.Part] = []
+    if message.text:
+        parts.append(types.Part(text=message.text))
+    for call in message.tool_calls:
+        parts.append(
+            types.Part(
+                function_call=types.FunctionCall(
+                    id=_provider_id(call.id), name=call.name, args=call.arguments
+                )
+            )
+        )
     # Gemini rejects empty parts; an empty earlier response still has to be representable.
-    return types.Content(role=role, parts=[types.Part(text=message.text or "(empty response)")])
+    return types.Content(role="model", parts=parts or [types.Part(text="(empty response)")])
+
+
+def _function_response(message: Message) -> types.Part:
+    assert message.tool_name is not None  # guaranteed by Message validation
+    payload = {"error": message.text} if message.is_error else {"result": message.text}
+    return types.Part(
+        function_response=types.FunctionResponse(
+            id=_provider_id(message.tool_call_id), name=message.tool_name, response=payload
+        )
+    )
+
+
+def _provider_id(call_id: str | None) -> str | None:
+    """Gemini's own call id, or None for ids we generated (Gemini never issued those)."""
+    if call_id is None or call_id.startswith(_GENERATED_ID_PREFIX):
+        return None
+    return call_id
 
 
 def to_completion(response: types.GenerateContentResponse, model: str) -> Completion:
@@ -177,25 +257,41 @@ def to_completion(response: types.GenerateContentResponse, model: str) -> Comple
             raw=raw,
         )
     candidate = candidates[0]
-    parts = candidate.content.parts if candidate.content and candidate.content.parts else []
+    content = candidate.content
+    parts = content.parts if content and content.parts else []
     text = "".join(p.text for p in parts if p.text and not p.thought)
+    calls = [p.function_call for p in parts if p.function_call is not None]
+    tool_calls = [
+        ToolCall(
+            id=call.id or f"{_GENERATED_ID_PREFIX}{index}",
+            name=call.name or "",
+            arguments=dict(call.args or {}),
+        )
+        for index, call in enumerate(calls)
+    ]
     reason = _name(candidate.finish_reason) if candidate.finish_reason is not None else None
-    if reason == "STOP" or (reason is None and text):
-        stop, detail = StopReason.END, None
-    elif reason == "MAX_TOKENS":
+    if reason == "MAX_TOKENS":
         stop, detail = StopReason.MAX_TOKENS, None
     elif reason in _REFUSAL_REASONS:
         stop, detail = StopReason.REFUSED, reason
+    elif tool_calls and reason in ("STOP", None):
+        stop, detail = StopReason.TOOL_USE, None
+    elif reason == "STOP" or (reason is None and text):
+        stop, detail = StopReason.END, None
     else:
         stop, detail = StopReason.ERROR, f"finish reason {reason}"
     return Completion(
         provider="gemini",
         model=model,
         text=text,
+        tool_calls=tool_calls,
         stop_reason=stop,
         stop_detail=detail,
         usage=usage,
         raw=raw,
+        provider_data=(
+            {_CONTENT_KEY: content.model_dump(mode="json", exclude_none=True)} if content else None
+        ),
     )
 
 
@@ -216,10 +312,18 @@ def _name(value: Any) -> str:
 
 def _client_error(exc: genai_errors.ClientError) -> LLMError:
     if exc.code == 429:
+        quotas = _quota_ids(exc)
+        which = f" ({', '.join(quotas)})" if quotas else ""
         return LLMRateLimitError(
-            f"Gemini rate limit or quota hit: {exc.message}", retry_after=_retry_delay(exc)
+            f"Gemini rate limit or quota hit{which}: {exc.message}", retry_after=_retry_delay(exc)
         )
     return LLMRequestError(f"Gemini rejected the request ({exc.code}): {exc.message}")
+
+
+def _quota_ids(exc: genai_errors.APIError) -> list[str]:
+    """Which quotas were exceeded, from google.rpc.QuotaFailure (for example a per-day limit)."""
+    blob = json.dumps(getattr(exc, "details", None), default=str)
+    return list(dict.fromkeys(re.findall(r'"quotaId":\s*"([^"]+)"', blob)))
 
 
 def _retry_delay(exc: genai_errors.APIError) -> float | None:

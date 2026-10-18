@@ -90,7 +90,7 @@ class CachingAdapter:
         cached = self.cache.get(key)
         if cached is not None:
             self.hits += 1
-            return cached.model_copy(update={"cached": True})
+            return cached.model_copy(update={"cached": True, "retries": []})
         self.misses += 1
         if self.mode is CacheMode.REPLAY:
             raise CacheMissError(

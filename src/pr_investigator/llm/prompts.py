@@ -24,6 +24,17 @@ class Prompt:
     def sha256(self) -> str:
         return hashlib.sha256(self.text.encode()).hexdigest()
 
+    def sections(self) -> dict[str, str]:
+        """For prompts made of `## name` sections (such as short loop messages): name -> text."""
+        sections: dict[str, list[str]] = {}
+        current: list[str] | None = None
+        for line in self.text.split("\n"):
+            if line.startswith("## "):
+                current = sections.setdefault(line[3:].strip(), [])
+            elif current is not None:
+                current.append(line)
+        return {name: "\n".join(lines).strip() for name, lines in sections.items()}
+
 
 @cache
 def load_prompt(name: str, version: int) -> Prompt:

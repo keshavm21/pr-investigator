@@ -5,9 +5,9 @@ these to and from a specific provider's API.
 """
 
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pr_investigator.domain import DataClass
 from pr_investigator.errors import PRIError
@@ -51,7 +51,20 @@ class Message(BaseModel):
     role: Role
     text: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
-    tool_call_id: str | None = None  # set on TOOL messages: which call this result answers
+    # TOOL messages only: the call this result answers, the tool that produced it, and whether
+    # it reports an error (a failed tool or a rejected call).
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    is_error: bool = False
+    # ASSISTANT messages only: the provider's raw record of the turn, replayed verbatim on later
+    # requests. Opaque to the pipeline; only the adapter that produced it reads it.
+    provider_data: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _tool_fields(self) -> Self:
+        if self.role is Role.TOOL and (self.tool_call_id is None or self.tool_name is None):
+            raise ValueError("tool messages need tool_call_id and tool_name")
+        return self
 
     @classmethod
     def user(cls, text: str) -> "Message":
@@ -60,6 +73,12 @@ class Message(BaseModel):
     @classmethod
     def assistant(cls, text: str) -> "Message":
         return cls(role=Role.ASSISTANT, text=text)
+
+    @classmethod
+    def tool_result(cls, call: ToolCall, text: str, *, is_error: bool = False) -> "Message":
+        return cls(
+            role=Role.TOOL, text=text, tool_call_id=call.id, tool_name=call.name, is_error=is_error
+        )
 
 
 class LLMRequest(BaseModel):
@@ -77,12 +96,18 @@ class LLMRequest(BaseModel):
         default=0, description="Distinguishes repeated samples of an identical request in the cache"
     )
 
+    @model_validator(mode="after")
+    def _tools_or_schema(self) -> Self:
+        if self.tools and self.output_schema is not None:
+            raise ValueError("a request uses tools or an output schema, not both")
+        return self
+
     def cache_payload(self) -> dict[str, Any]:
         """Everything that determines the response, in JSON-serializable form."""
         return {
             "stage": self.stage,
             "system": self.system,
-            "messages": [m.model_dump(mode="json") for m in self.messages],
+            "messages": [_message_payload(m) for m in self.messages],
             "tools": [t.model_dump(mode="json") for t in self.tools],
             "output_schema": (
                 self.output_schema.model_json_schema() if self.output_schema is not None else None
@@ -91,6 +116,24 @@ class LLMRequest(BaseModel):
             "effort": self.effort,
             "sample": self.sample,
         }
+
+
+# Message fields added after the official B0 baseline was recorded. Left out of the cache key
+# while they hold their defaults, so requests shaped like B0's keep their original keys and the
+# baseline's recorded responses stay replayable.
+_LATER_MESSAGE_FIELDS: dict[str, Any] = {
+    "tool_name": None,
+    "is_error": False,
+    "provider_data": None,
+}
+
+
+def _message_payload(message: Message) -> dict[str, Any]:
+    data = message.model_dump(mode="json")
+    for name, default in _LATER_MESSAGE_FIELDS.items():
+        if data.get(name) == default:
+            del data[name]
+    return data
 
 
 class Usage(BaseModel):
@@ -119,7 +162,10 @@ class Completion(BaseModel):
     stop_detail: str | None = None
     usage: Usage = Field(default_factory=Usage)
     raw: dict[str, Any] = Field(default_factory=dict)
+    provider_data: dict[str, Any] | None = None  # see Message.provider_data
     cached: bool = False
+    # Provider errors retried before this completion came back (real calls only, not cached).
+    retries: list[str] = Field(default_factory=list)
 
 
 class LLMResponse(BaseModel):
@@ -131,9 +177,21 @@ class LLMResponse(BaseModel):
     parsed: BaseModel | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     stop_reason: StopReason
+    stop_detail: str | None = None  # the provider's reason, for refusals and errors
     usage: Usage
     attempts: int = 1
     cached: bool = False
+    provider_data: dict[str, Any] | None = None
+    retries: list[str] = Field(default_factory=list)  # see Completion.retries
+
+    def to_message(self) -> Message:
+        """The assistant turn to append to the conversation, with its replay data."""
+        return Message(
+            role=Role.ASSISTANT,
+            text=self.text,
+            tool_calls=self.tool_calls,
+            provider_data=self.provider_data,
+        )
 
 
 class Capabilities(BaseModel):

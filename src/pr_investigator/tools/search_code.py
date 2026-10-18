@@ -3,6 +3,9 @@
 ripgrep's default regex engine matches in linear time, so model-supplied patterns can't cause
 catastrophic backtracking. Ignore files are disabled (`--no-ignore`): a checkout only contains
 tracked files, and honouring `.gitignore` would let a PR hide committed files from search.
+
+ripgrep returns full lines; very long ones are shortened only for display, so content hashes
+always describe the real file lines.
 """
 
 import json
@@ -15,11 +18,12 @@ from pydantic import BaseModel, Field
 
 from pr_investigator.tools.base import (
     Observation,
+    OutputBudget,
     ToolContext,
     ToolError,
     ToolResult,
-    clip,
-    sha256_text,
+    clip_line,
+    lines_sha256,
 )
 
 TIMEOUT_SECONDS = 20
@@ -60,8 +64,6 @@ class SearchCode:
             "--no-ignore",
             "--hidden",
             "--glob=!.git",
-            "--max-columns=500",
-            "--max-columns-preview",
             "--max-filesize=2M",
             f"--context={args.context_lines}",
         ]
@@ -79,11 +81,12 @@ class SearchCode:
         if proc.returncode == 2:
             message = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()
             raise ToolError(f"search failed: {message[-1] if message else 'unknown error'}")
-        return self._format(args, proc.stdout)
+        return self._format(args, proc.stdout, ctx.max_output_chars)
 
-    def _format(self, args: SearchCodeArgs, output: bytes) -> ToolResult:
+    def _format(self, args: SearchCodeArgs, output: bytes, max_chars: int) -> ToolResult:
         # path -> line number -> (is_match, text)
         lines_by_file: dict[str, dict[int, tuple[bool, str]]] = defaultdict(dict)
+        undecodable: set[tuple[str, int]] = set()  # lines ripgrep couldn't give us as text
         match_lines: list[tuple[str, int]] = []
         total_matches = 0
         for raw in output.splitlines():
@@ -94,6 +97,8 @@ class SearchCode:
             data = event["data"]
             path = _text(data["path"]).removeprefix("./")
             number = int(data["line_number"])
+            if "text" not in data["lines"]:
+                undecodable.add((path, number))
             text = _text(data["lines"]).rstrip("\n")
             if kind == "match":
                 total_matches += 1
@@ -107,38 +112,54 @@ class SearchCode:
         query = f"{'regex' if args.regex else 'literal'} {args.pattern!r}"
         if args.path_glob:
             query += f" in {args.path_glob}"
+        search = Observation(tool=self.name, kind="search", query=query, match_count=total_matches)
         if total_matches == 0:
-            return ToolResult(
-                content=f"No matches for {query}.",
-                observations=[
-                    Observation(tool=self.name, kind="search", query=query, match_count=0)
-                ],
-            )
+            return ToolResult(content=f"No matches for {query}.", observations=[search])
 
-        shown_files = sorted({path for path, _ in match_lines})
-        out = [
-            f"{total_matches} matches for {query}; showing {len(match_lines)} "
-            f"in {len(shown_files)} files."
-        ]
-        observations = [
-            Observation(tool=self.name, kind="search", query=query, match_count=total_matches)
-        ]
-        for path in shown_files:
-            out.append(path)
-            numbers = sorted(lines_by_file[path])
-            # Context is only kept near shown matches.
+        # Show whole groups (a match plus its context) until the budget runs out, and record
+        # an observation only for the lines actually shown. A first group bigger than the
+        # whole budget is cut line by line.
+        budget = OutputBudget(max_chars)
+        observations = [search]
+        matches = set(match_lines)
+        shown_matches = 0
+        shown_files = 0
+        budget_full = False
+        for path in sorted({p for p, _ in match_lines}):
             wanted = {
                 n
                 for p, m in match_lines
                 if p == path
                 for n in range(m - args.context_lines, m + args.context_lines + 1)
             }
-            shown = [n for n in numbers if n in wanted]
-            for number in shown:
-                is_match, text = lines_by_file[path][number]
-                out.append(f"  {number:>6}{':' if is_match else '-'} {text}")
-            for start, end in _ranges(shown):
-                block = "\n".join(lines_by_file[path][n][1] for n in range(start, end + 1))
+            numbers = sorted(n for n in lines_by_file[path] if n in wanted)
+            groups = _ranges(numbers)
+            for index, (start, end) in enumerate(groups):
+                rows = [
+                    f"  {n:>6}{':' if lines_by_file[path][n][0] else '-'} "
+                    f"{clip_line(lines_by_file[path][n][1])}"
+                    for n in range(start, end + 1)
+                ]
+                block = [path, *rows] if index == 0 else rows
+                if budget.fits(*block):
+                    budget.add(*block)
+                elif observations[1:]:  # something is already shown: stop on a group boundary
+                    budget_full = True
+                    break
+                else:
+                    if index == 0:
+                        budget.add(path)
+                    end = start - 1
+                    for row in rows:
+                        if end >= start and not budget.fits(row):
+                            break  # always show at least one line
+                        budget.add(row)
+                        end += 1
+                    budget_full = True
+                shown_files += index == 0
+                shown_matches += sum((path, n) in matches for n in range(start, end + 1))
+                texts = [lines_by_file[path][n][1] for n in range(start, end + 1)]
+                readable = not any((path, n) in undecodable for n in range(start, end + 1))
                 observations.append(
                     Observation(
                         tool=self.name,
@@ -146,15 +167,26 @@ class SearchCode:
                         path=path,
                         start_line=start,
                         end_line=end,
-                        content_sha256=sha256_text(block),
+                        content_sha256=lines_sha256(texts) if readable else None,
                     )
                 )
-        if total_matches > len(match_lines):
-            out.append(f"[{total_matches - len(match_lines)} more matches not shown]")
-        content, clipped = clip("\n".join(out))
+                if budget_full:
+                    break
+            if budget_full:
+                break
+
+        header = (
+            f"{total_matches} matches for {query}; showing {shown_matches} in {shown_files} files."
+        )
+        footer = ""
+        if shown_matches < total_matches:
+            footer = (
+                f"\n[{total_matches - shown_matches} more matches not shown; narrow the search "
+                "with path_glob or a more specific pattern]"
+            )
         return ToolResult(
-            content=content,
-            truncated=clipped or total_matches > len(match_lines),
+            content=f"{header}\n{budget.text()}{footer}",
+            truncated=shown_matches < total_matches,
             observations=observations,
         )
 

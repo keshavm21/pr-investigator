@@ -4,12 +4,21 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from google.genai import _extra_utils, types
 from google.genai import errors as genai_errors
-from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from pr_investigator.config import CacheMode
 from pr_investigator.domain import DataClass
-from pr_investigator.llm.gemini import GeminiAdapter, build_config, gemini_schema, to_completion
+from pr_investigator.llm.cache import CachingAdapter, ResponseCache
+from pr_investigator.llm.fake import ScriptedAdapter
+from pr_investigator.llm.gemini import (
+    GeminiAdapter,
+    build_config,
+    gemini_schema,
+    to_completion,
+    to_contents,
+)
 from pr_investigator.llm.types import (
     Effort,
     LLMRateLimitError,
@@ -17,10 +26,14 @@ from pr_investigator.llm.types import (
     LLMRequestError,
     LLMTransientError,
     Message,
+    Role,
     StopReason,
-    ToolSpec,
+    ToolCall,
 )
 from pr_investigator.review.baseline import BaselineOutput
+from pr_investigator.tools import tool_specs
+
+SIGNATURE = bytes(range(256))  # every byte value, including invalid UTF-8
 
 
 class Tricky(BaseModel):
@@ -164,7 +177,13 @@ async def test_rate_limit_errors_carry_the_retry_delay() -> None:
                 "message": "Quota exceeded",
                 "status": "RESOURCE_EXHAUSTED",
                 "details": [
-                    {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "31s"}
+                    {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "31s"},
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [
+                            {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}
+                        ],
+                    },
                 ],
             }
         },
@@ -173,6 +192,9 @@ async def test_rate_limit_errors_carry_the_retry_delay() -> None:
     with pytest.raises(LLMRateLimitError) as raised:
         await adapter.complete(make_request())
     assert raised.value.retry_after == 31.0
+    # The message names the exhausted quota, so a stop reason says which limit was hit.
+    assert "GenerateRequestsPerDayPerProjectPerModel-FreeTier" in str(raised.value)
+    assert "Quota exceeded" in str(raised.value)
 
 
 async def test_other_errors_are_classified() -> None:
@@ -186,9 +208,165 @@ async def test_other_errors_are_classified() -> None:
         await adapter.complete(make_request())
 
 
-async def test_tool_calling_is_rejected_until_phase_two() -> None:
-    adapter, models = adapter_with(response())
-    spec = ToolSpec(name="t", description="d", parameters={"type": "object"})
-    with pytest.raises(LLMRequestError):
-        await adapter.complete(make_request(tools=[spec]))
-    assert models.calls == []
+# --- tool calling ---------------------------------------------------------------------------
+
+
+def signature_turn() -> types.Content:
+    """A model turn as Gemini returns it: a thought summary, then calls carrying a signature."""
+    return types.Content(
+        role="model",
+        parts=[
+            types.Part(text="I should read the file.", thought=True),
+            types.Part(
+                function_call=types.FunctionCall(
+                    id="call-abc", name="read_file", args={"path": "app/a.py", "start_line": 3}
+                ),
+                thought_signature=SIGNATURE,
+            ),
+            types.Part(function_call=types.FunctionCall(name="search_code", args={"pattern": "x"})),
+        ],
+    )
+
+
+def test_config_declares_tools_with_clean_schemas_and_disables_afc() -> None:
+    specs = tool_specs()
+    config = build_config(make_request(tools=specs))
+    assert config.tools is not None
+    (tool,) = config.tools
+    declarations = tool.function_declarations or []
+    assert [d.name for d in declarations] == [spec.name for spec in specs]
+    for declaration in declarations:
+        assert declaration.description
+        assert all("default" not in node for node in walk(declaration.parameters_json_schema))
+    read_file = declarations[[d.name for d in declarations].index("read_file")]
+    assert read_file.parameters_json_schema["required"] == ["path"]
+    assert config.tool_config is None  # the model is never forced to call a tool
+    for request in (make_request(tools=specs), make_request()):
+        afc = build_config(request).automatic_function_calling
+        assert afc is not None and afc.disable is True
+
+
+def test_disabled_afc_takes_the_sdk_path_that_does_not_warn() -> None:
+    # The SDK prints its "direct use of automatic function calling" warning only when this
+    # helper says AFC is on. It defaults to on when the config doesn't disable it.
+    assert _extra_utils.should_disable_afc(build_config(make_request(tools=tool_specs())))
+    assert not _extra_utils.should_disable_afc(types.GenerateContentConfig(candidate_count=1))
+
+
+def test_a_request_cannot_mix_tools_and_an_output_schema() -> None:
+    with pytest.raises(ValidationError, match="tools or an output schema"):
+        make_request(tools=tool_specs(), output_schema=BaselineOutput)
+
+
+def test_tool_messages_need_a_call_id_and_tool_name() -> None:
+    with pytest.raises(ValidationError):
+        Message(role=Role.TOOL, text="result")
+
+
+def test_function_calls_are_parsed_with_ids_and_replay_data() -> None:
+    turn = signature_turn()
+    result = to_completion(response(turn.parts), "m")
+    assert result.stop_reason is StopReason.TOOL_USE
+    assert result.text == ""  # the thought summary is not answer text
+    assert [(c.id, c.name, c.arguments) for c in result.tool_calls] == [
+        ("call-abc", "read_file", {"path": "app/a.py", "start_line": 3}),
+        ("pri-call-1", "search_code", {"pattern": "x"}),  # Gemini sent no id: we made one
+    ]
+    assert result.provider_data is not None
+    replayed = types.Content.model_validate(result.provider_data["gemini_content"])
+    assert replayed.parts == turn.parts
+    assert replayed.parts is not None and replayed.parts[1].thought_signature == SIGNATURE
+
+
+def test_text_turns_keep_replay_data_and_truncated_calls_are_not_tool_use() -> None:
+    text = to_completion(response([types.Part(text="done")]), "m")
+    assert text.stop_reason is StopReason.END and text.provider_data is not None
+    call = types.Part(function_call=types.FunctionCall(name="read_file", args={"path": "a"}))
+    truncated = to_completion(response([call], "MAX_TOKENS"), "m")
+    assert truncated.stop_reason is StopReason.MAX_TOKENS
+
+
+def test_model_turns_are_replayed_verbatim_including_signatures() -> None:
+    turn = signature_turn()
+    data = {"gemini_content": turn.model_dump(mode="json", exclude_none=True)}
+    message = Message(role=Role.ASSISTANT, provider_data=data)
+    contents = to_contents([Message.user("question"), message])
+    assert contents[1] == turn
+    assert contents[1].parts is not None and contents[1].parts[1].thought_signature == SIGNATURE
+
+
+def test_model_turns_without_replay_data_are_rebuilt() -> None:
+    calls = [
+        ToolCall(id="call-abc", name="read_file", arguments={"path": "a.py"}),
+        ToolCall(id="pri-call-1", name="search_code", arguments={"pattern": "x"}),
+    ]
+    (content,) = to_contents([Message(role=Role.ASSISTANT, text="Let me look.", tool_calls=calls)])
+    assert content.role == "model" and content.parts is not None
+    text, first, second = content.parts
+    assert text.text == "Let me look."
+    assert first.function_call is not None and first.function_call.id == "call-abc"
+    assert first.function_call.args == {"path": "a.py"}
+    assert second.function_call is not None and second.function_call.id is None
+
+
+def test_tool_results_and_a_following_reminder_become_one_user_turn() -> None:
+    calls = [
+        ToolCall(id="call-abc", name="read_file", arguments={"path": "a.py"}),
+        ToolCall(id="pri-call-1", name="search_code", arguments={"pattern": "("}),
+    ]
+    contents = to_contents(
+        [
+            Message.user("question"),
+            Message(role=Role.ASSISTANT, tool_calls=calls),
+            Message.tool_result(calls[0], "1  def f(): ..."),
+            Message.tool_result(calls[1], "search failed: bad regex", is_error=True),
+            Message.user("1 turn left: submit now."),
+        ]
+    )
+    # The API rejects a "tool" role: results go back in a user turn, merged with the reminder.
+    assert [c.role for c in contents] == ["user", "model", "user"]
+    assert contents[2].parts is not None
+    first, second, reminder = contents[2].parts
+    assert first.function_response is not None and second.function_response is not None
+    assert (first.function_response.id, first.function_response.name) == ("call-abc", "read_file")
+    assert first.function_response.response == {"result": "1  def f(): ..."}
+    assert second.function_response.id is None  # generated ids are never sent to Gemini
+    assert second.function_response.response == {"error": "search failed: bad regex"}
+    assert reminder.text == "1 turn left: submit now."
+
+
+def test_a_recorded_turn_without_parts_is_replaced_by_a_placeholder() -> None:
+    # A MALFORMED_FUNCTION_CALL reply can come back with empty content; Gemini rejects an
+    # empty turn, but the loop still appends it to keep history complete.
+    empty = Message(role=Role.ASSISTANT, provider_data={"gemini_content": {"role": "model"}})
+    (content,) = to_contents([empty])
+    assert content.role == "model" and content.parts is not None
+    assert [p.text for p in content.parts] == ["(empty response)"]
+
+
+def test_model_turns_are_never_merged() -> None:
+    first = Message(role=Role.ASSISTANT, text="one")
+    second = Message(role=Role.ASSISTANT, text="two")
+    contents = to_contents([Message.user("q"), first, second])
+    assert [c.role for c in contents] == ["user", "model", "model"]
+
+
+async def test_replay_data_survives_the_response_cache(tmp_path: Any) -> None:
+    completion = to_completion(response(signature_turn().parts), "m")
+    cached = CachingAdapter(
+        ScriptedAdapter([completion]), ResponseCache(tmp_path), CacheMode.READ_WRITE
+    )
+    request = make_request(tools=tool_specs())
+    first = await cached.complete(request)
+    second = await cached.complete(request)  # the scripted adapter is empty now: cache hit
+    assert second.cached and second.provider_data == first.provider_data
+    (content,) = to_contents([Message(role=Role.ASSISTANT, provider_data=second.provider_data)])
+    assert content.parts is not None and content.parts[1].thought_signature == SIGNATURE
+
+
+async def test_complete_sends_tools_and_returns_tool_calls() -> None:
+    adapter, models = adapter_with(response(signature_turn().parts))
+    result = await adapter.complete(make_request(tools=tool_specs()))
+    config = models.calls[0]["config"]
+    assert config.tools and config.automatic_function_calling.disable is True
+    assert result.stop_reason is StopReason.TOOL_USE and len(result.tool_calls) == 2
