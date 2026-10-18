@@ -59,6 +59,19 @@ class EvalRunInfo(BaseModel):
     split: str = "all"  # which cases: dev, test or all
 
 
+def has_code_changes(porcelain: str) -> bool:
+    """Whether `git status --porcelain` output shows changes other than eval result folders.
+
+    Filtered here rather than with an exclude pathspec: run_git sets GIT_LITERAL_PATHSPECS,
+    which turns pathspec magic such as ":(exclude)" into a literal path.
+    """
+    for line in porcelain.splitlines():
+        path = line[3:].split(" -> ")[-1].strip('"')
+        if line.strip() and not path.startswith("evals/results/"):
+            return True
+    return False
+
+
 def code_version() -> tuple[str | None, bool | None]:
     """The commit of this PR Investigator checkout, and whether it has uncommitted changes.
     (None, None) when the package isn't running from a git checkout."""
@@ -67,9 +80,7 @@ def code_version() -> tuple[str | None, bool | None]:
         return None, None
     try:
         commit = run_git(["rev-parse", "HEAD"], cwd=root).decode().strip()
-        # Result folders written by evals don't count as code changes.
-        status = ["status", "--porcelain", "--", ".", ":(exclude)evals/results"]
-        dirty = bool(run_git(status, cwd=root).strip())
+        dirty = has_code_changes(run_git(["status", "--porcelain"], cwd=root).decode())
     except PRIError:
         return None, None
     return commit, dirty

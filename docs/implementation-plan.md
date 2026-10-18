@@ -208,7 +208,7 @@ Choices made while building, beyond the decisions above (details in [architectur
 | Step | Content | State |
 |---|---|---|
 | 0 | Close out Phase 2: status lines, a demo from a committed trace | Done |
-| 1 | Eval suite v2: 20 new cases (multi-issue PRs, context reached through registries and rule strings, convention breaks, more decoys), the Werkzeug fixture, a dev/test split; then B0, A1 and A2 baselines on it | Cases built and validated; live baselines need approval |
+| 1 | Eval suite v2: 20 new cases (multi-issue PRs, context reached through registries and rule strings, convention breaks, more decoys), the Werkzeug fixture, a dev/test split; then B0, A1 and A2 baselines on it | Suite built; B0 and A1 test-split baselines done ([results](../evals/results/README.md#phase-3-suite-v2-baselines-held-out-test-split)): B0 46% recall, A1 23%; A2 baseline pending |
 | 2 | Structural index (tree-sitter, Python, keyed by blob SHA, SQLite) and tools: `find_symbol`, `find_references` (name-based, labelled), `get_symbol_context`, `find_tests`, `git_history`, all with exact observations | Planned |
 | 3 | Deterministic context pack (callers, callees, tests, config of each changed function); B1 (one call with the diff and the pack); optional pack in A1's opening | Planned |
 | 4 | Deterministic leads: hidden Unicode, edits to agent instruction files, tree-sitter risk signals; each lead must be addressed or dismissed | Planned |

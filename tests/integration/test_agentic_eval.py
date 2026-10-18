@@ -18,7 +18,12 @@ from pr_investigator.config import Settings
 from pr_investigator.domain import EvidenceRole
 from pr_investigator.evaluation.cases import load_cases
 from pr_investigator.evaluation.materialize import Region, materialize
-from pr_investigator.evaluation.runner import code_version, run_eval, write_results
+from pr_investigator.evaluation.runner import (
+    code_version,
+    has_code_changes,
+    run_eval,
+    write_results,
+)
 from pr_investigator.llm.factory import build_client
 from pr_investigator.llm.fake import ScriptedAdapter
 from pr_investigator.llm.types import Completion, LLMRequest, Message, Role, StopReason, ToolCall
@@ -273,3 +278,12 @@ def test_runs_record_the_commit_of_this_checkout() -> None:
     commit, dirty = code_version()
     assert commit is not None and re.fullmatch(r"[0-9a-f]{40}", commit)
     assert isinstance(dirty, bool)
+
+
+def test_eval_result_folders_do_not_count_as_code_changes() -> None:
+    assert not has_code_changes("")
+    assert not has_code_changes("?? evals/results/20261018-112200-b0-gemini-3.5-flash-lite/\n")
+    assert has_code_changes(" M src/pr_investigator/cli.py\n")
+    assert has_code_changes("?? evals/results/README.md.bak\n?? src/new_module.py\n")
+    assert has_code_changes("R  docs/a.md -> docs/b.md\n")
+    assert not has_code_changes("R  evals/results/a/x.json -> evals/results/b/x.json\n")

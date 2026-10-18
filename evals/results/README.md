@@ -86,3 +86,30 @@ Rejected submissions in A2 fell from 17 in 10 reviews to 3 in 20.
 - **Samples aren't fully independent across runs.** Responses are cached by request, so whenever a conversation is byte-identical to an earlier run's (same prompts, same tool results), sample 0 replays the recorded response. The final A1 sample 0 is identical to A1 run 1, and the final A2 sample 0 partly replays A2 run 2, including all of its planner calls. Sample 1 is new in both.
 - **Location-only matching** counts a finding as correct if it lands within 3 lines of the seeded issue. All matched findings were also checked against the traces and describe the seeded issue.
 
+## Phase 3: suite v2 baselines (held-out test split)
+
+Eval suite v2 (D26) adds 20 cases, including a Werkzeug 3.1.9 fixture and PRs with two issues each. These baselines use the 15 held-out **test** cases (13 seeded issues, 3 decoys, 2 clean), 1 sample each, with the same model and matching as before.
+
+| | B0 | A1 |
+|---|---|---|
+| Precision | 86% (6 of 7) | 75% (3 of 4) |
+| Recall | **46% (6 of 13)** | 23% (3 of 13) |
+| False positives on clean PRs / decoys flagged | 1 / 0 | 0 / 0 |
+| Findings with verified evidence | n/a | 100% |
+| Requests per PR (mean / max) | 1 / 1 | 5.5 / 11 |
+| Input tokens per PR (mean) | about 1K | about 26K |
+
+- **Directories:** `20261018-112200-b0-gemini-3.5-flash-lite/` and `20261018-112312-a1-gemini-3.5-flash-lite/` (A1 with traces).
+- **Code:** commit `757faed`. The A1 summary says "with uncommitted changes", but only the B0 results folder was uncommitted at the time: the check meant to ignore result folders didn't work under the hardened git settings, fixed in the next commit.
+- **Commands:** `PRI_LLM_REQUESTS_PER_MINUTE=10 uv run pri eval run --split test --reviewer b0 --no-judge --samples 1 --max-requests 20`, and the same with `--reviewer a1 --max-requests 180`. A1 needed 9 retries after Gemini 503 errors (92 real requests).
+
+**Per case.** Both found the SQL injection in the order cancellation, the unchecked user in the role change, and the timing-unsafe password comparison. B0 also found the safe_join traversal, the UUID regex and the ProxyFix IPv6 split; A1 found none of those three. Neither found: the cancellation IDOR, the unvalidated role, the ProxyFix spoofing, the Content-Range off-by-one, the removed debugger PIN check, the converter keyword that rule strings still use, or the anonymous-user crash in the price update.
+
+**False positives.** B0 claimed a helper function was used before its definition in a clean refactor (Python resolves the name at call time). A1 noted that two converter docstrings still say `signed`; that is true but minor and not in the ground truth.
+
+**Why A1 did worse.** In the traces, A1 read the right code (and often the tests) and then accepted the PR description's claim instead of checking it. Its summaries repeat the author: normpath "already collapses `..`", the first X-Forwarded-For entry "is the original client", the Content-Range change "correctly fixes" the off-by-one. Each description is deliberately plausible but wrong, as in real buggy PRs. B0 sees the same descriptions but has to judge the diff on its own; A1's reading of unchanged tests that don't cover the bug seems to reinforce the author's claim. This is a finding about the agent's judgment, not about missing context, and it matters for Phase 3: on these cases, the bottleneck is checking claims, not finding code.
+
+**The suite does its job.** Unlike the 10 Phase 1 cases, where A1 scored 100%, these cases separate the configurations, leaving room for every Phase 3 component to show its value.
+
+**Protocol note.** These failures were analyzed on the held-out split. Under D26, any change motivated by them (for example, telling the agent to verify the author's claims) must be developed against dev cases and then measured once on the test split, with the observation's origin stated.
+
