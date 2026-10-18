@@ -4,11 +4,15 @@ A case is a pull request against a shared fixture project: a list of edits appli
 fixture, plus the issues a reviewer should report (`expected`) and the places it must not flag
 (`must_not_flag`, used by decoys). Locations are given as a text `match` inside the head
 version of a file, so they don't break when the fixture changes elsewhere.
+
+Each case belongs to a split. `dev` cases may be used while developing reviewers and prompts;
+`test` cases are held out and are the ones results are reported on, so improvements can't be
+tuned to them.
 """
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -65,6 +69,7 @@ class EvalCase(BaseModel):
     title: str
     description: str = ""
     fixture: str = "inventory_service"
+    split: Literal["dev", "test"] = "dev"
     edits: list[Edit] = Field(min_length=1)
     expected: list[ExpectedIssue] = Field(default_factory=list)
     must_not_flag: list[MustNotFlag] = Field(default_factory=list)
@@ -91,7 +96,11 @@ def load_case(path: Path) -> EvalCase:
     return case
 
 
-def load_cases(cases_dir: Path, only: list[str] | None = None) -> list[EvalCase]:
+def load_cases(
+    cases_dir: Path, only: list[str] | None = None, split: str | None = None
+) -> list[EvalCase]:
+    """Load cases, optionally only the ids in `only` and only those in `split` ("dev" or
+    "test"; None or "all" for every case)."""
     if not cases_dir.is_dir():
         raise EvalCaseError(f"no cases directory at {cases_dir}")
     cases = [load_case(p) for p in sorted(cases_dir.glob("*.yaml"))]
@@ -101,4 +110,8 @@ def load_cases(cases_dir: Path, only: list[str] | None = None) -> list[EvalCase]
         if unknown:
             raise EvalCaseError(f"unknown case ids: {', '.join(unknown)}")
         cases = [c for c in cases if c.id in only]
+    if split not in (None, "all"):
+        if split not in ("dev", "test"):
+            raise EvalCaseError(f"unknown split {split!r}: use dev, test or all")
+        cases = [c for c in cases if c.split == split]
     return cases

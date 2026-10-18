@@ -1,0 +1,28 @@
+id: seeded-werkzeug-gen-salt-random
+kind: seeded
+split: dev
+fixture: werkzeug
+title: Speed up gen_salt
+description: |
+  secrets.choice is slow for long salts; random.choices does the same in one call.
+edits:
+- path: src/werkzeug/security.py
+  find: |
+    import posixpath
+    import secrets
+  replace: |
+    import posixpath
+    import random
+    import secrets
+- path: src/werkzeug/security.py
+  find: '    return "".join(secrets.choice(SALT_CHARS) for _ in range(length))'
+  replace: '    return "".join(random.choices(SALT_CHARS, k=length))'
+expected:
+- id: predictable-salt
+  category: security
+  severity: high
+  location:
+    path: src/werkzeug/security.py
+    match: return "".join(random.choices(SALT_CHARS, k=length))
+  description: random is not a cryptographically secure generator, so salts become predictable. Beyond
+    the diff, DebuggedApplication uses gen_salt(20) for the secret that guards debugger commands.

@@ -1,0 +1,26 @@
+id: seeded-werkzeug-uuid-converter
+kind: seeded
+split: test
+fixture: werkzeug
+title: Accept compact UUIDs in routes
+description: |
+  Allow UUIDs without dashes in URLs, such as /object/123e4567e89b12d3a456426614174000.
+edits:
+- path: src/werkzeug/routing/converters.py
+  find: |2
+        regex = (
+            r"[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-"
+            r"[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}"
+        )
+  replace: |2
+        regex = r"[A-Fa-f0-9-]{32,36}"
+expected:
+- id: uncaught-value-error
+  category: reliability
+  severity: medium
+  location:
+    path: src/werkzeug/routing/converters.py
+    match: regex = r"[A-Fa-f0-9-]{32,36}"
+  description: to_python still calls uuid.UUID(value), which raises ValueError for strings the new regex
+    accepts but that aren't UUIDs (for example 33 or more hex digits, or fewer than 32 hex digits among dashes). The matcher only treats
+    ValidationError as no match, so these URLs raise an unhandled ValueError (HTTP 500) instead of 404.

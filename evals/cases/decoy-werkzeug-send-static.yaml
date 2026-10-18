@@ -1,0 +1,30 @@
+id: decoy-werkzeug-send-static
+kind: decoy
+split: test
+fixture: werkzeug
+title: Add a send_static helper
+description: |
+  A small convenience wrapper for serving files from an app's static folder.
+edits:
+- path: src/werkzeug/utils.py
+  find: 'def import_string(import_name: str, silent: bool = False) -> t.Any:'
+  replace: |-
+    def send_static(
+        static_folder: os.PathLike[str] | str, filename: str, environ: WSGIEnvironment
+    ) -> Response:
+        """Send ``filename`` from ``static_folder``, letting browsers cache it for an hour.
+
+        :param static_folder: The application's static directory.
+        :param filename: The requested file name, as given in the URL.
+        :param environ: The WSGI environ for the current request.
+        """
+        return send_from_directory(static_folder, filename, environ, max_age=3600)
+
+
+    def import_string(import_name: str, silent: bool = False) -> t.Any:
+must_not_flag:
+- location:
+    path: src/werkzeug/utils.py
+    match: return send_from_directory(static_folder, filename, environ, max_age=3600)
+  reason: send_from_directory passes the client path through safe_join and returns 404 for anything outside
+    the directory or not a regular file, so a URL-supplied filename can't escape static_folder.

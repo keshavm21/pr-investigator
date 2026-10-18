@@ -1,0 +1,45 @@
+id: seeded-inventory-cancel-order
+kind: seeded
+split: test
+fixture: inventory_service
+title: Add order cancellation
+description: |
+  Customers can cancel an order, and the reason is recorded for support.
+edits:
+- path: app/routes/orders.py
+  find: |2
+        return Response.json({"total": str(total)}, status=201)
+  replace: |2
+        return Response.json({"total": str(total)}, status=201)
+
+
+    @router.post("/{order_id}/cancel")
+    @require_login
+    def cancel_order(request: Request, order_id: str) -> Response:
+        current_user(request)
+        order = db.query_one("SELECT id, status FROM orders WHERE id = ?", (int(order_id),))
+        if order is None:
+            raise HTTPError(404, "order not found")
+        if order["status"] == "cancelled":
+            return Response(status=204)
+        reason = request.json().get("reason", "")
+        sql = f"UPDATE orders SET status = 'cancelled', cancel_reason = '{reason}' WHERE id = ?"
+        db.execute(sql, (int(order_id),))
+        return Response(status=204)
+expected:
+- id: idor
+  category: security
+  severity: high
+  location:
+    path: app/routes/orders.py
+    match: order = db.query_one("SELECT id, status FROM orders WHERE id = ?"
+  description: The order is looked up by id only, never checked against the current user (orders have
+    a user_id), so any logged-in user can cancel anyone's order.
+- id: sqli
+  category: security
+  severity: high
+  location:
+    path: app/routes/orders.py
+    match: sql = f"UPDATE orders SET status = 'cancelled'
+  description: 'The client-supplied reason is interpolated into the SQL text, against the db module''s
+    rule to pass values as parameters: SQL injection.'

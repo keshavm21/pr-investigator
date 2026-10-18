@@ -1,0 +1,32 @@
+id: clean-werkzeug-range-to-header
+kind: clean
+split: test
+fixture: werkzeug
+title: Tidy Range.to_header
+description: |
+  Move range formatting into a helper. No behaviour change.
+edits:
+- path: src/werkzeug/datastructures/range.py
+  find: |2
+            ranges = []
+            for begin, end in self.ranges:
+                if end is None:
+                    ranges.append(f"{begin}-" if begin >= 0 else str(begin))
+                else:
+                    ranges.append(f"{begin}-{end - 1}")
+            return f"{self.units}={','.join(ranges)}"
+  replace: |2
+            ranges = ",".join(_format_range(begin, end) for begin, end in self.ranges)
+            return f"{self.units}={ranges}"
+- path: src/werkzeug/datastructures/range.py
+  find: |
+    class Range:
+  replace: |
+    def _format_range(begin: int, end: int | None) -> str:
+        """Format one non-inclusive ``(begin, end)`` pair as a Range header item."""
+        if end is not None:
+            return f"{begin}-{end - 1}"
+        return f"{begin}-" if begin >= 0 else str(begin)
+
+
+    class Range:

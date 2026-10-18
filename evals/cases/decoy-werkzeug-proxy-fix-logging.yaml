@@ -1,0 +1,36 @@
+id: decoy-werkzeug-proxy-fix-logging
+kind: decoy
+split: test
+fixture: werkzeug
+title: Log the client address ProxyFix resolves
+description: |
+  Debug logging to help diagnose proxy configuration problems.
+edits:
+- path: src/werkzeug/middleware/proxy_fix.py
+  find: |
+    import typing as t
+  replace: |
+    import logging
+    import typing as t
+- path: src/werkzeug/middleware/proxy_fix.py
+  find: |
+    from ..http import parse_list_header
+  replace: |
+    from ..http import parse_list_header
+
+    _logger = logging.getLogger(__name__)
+- path: src/werkzeug/middleware/proxy_fix.py
+  find: |2
+            if x_for:
+                environ["REMOTE_ADDR"] = x_for
+  replace: |2
+            if x_for:
+                _logger.debug("client address %s (was %s)", x_for, orig_remote_addr)
+                environ["REMOTE_ADDR"] = x_for
+must_not_flag:
+- location:
+    path: src/werkzeug/middleware/proxy_fix.py
+    match: environ["REMOTE_ADDR"] = x_for
+  reason: x_for comes from _get_real_value, which takes the value `x_for` hops from the right, the one
+    written by the trusted proxy, and ignores client-supplied entries to its left. The new log line uses
+    lazy %-formatting.

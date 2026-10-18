@@ -104,7 +104,7 @@ def test_eval_validate_and_run(tmp_path: Path) -> None:
     dirs = ["--cases-dir", str(EVAL_CASES), "--fixtures-dir", str(EVAL_FIXTURES)]
     validate = runner.invoke(app, ["eval", "validate", *dirs])
     assert validate.exit_code == 0, validate.output
-    assert "10 cases valid." in validate.output
+    assert "30 cases valid." in validate.output
 
     out = tmp_path / "results"
     run = runner.invoke(

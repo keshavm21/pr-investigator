@@ -56,6 +56,7 @@ class EvalRunInfo(BaseModel):
     code_commit: str | None = None  # this checkout of PR Investigator
     code_dirty: bool | None = None  # uncommitted changes when the run started
     provider_requests: int | None = None  # real provider calls, retries and judge included
+    split: str = "all"  # which cases: dev, test or all
 
 
 def code_version() -> tuple[str | None, bool | None]:
@@ -118,6 +119,7 @@ async def run_eval(
     reviewer: Reviewer = Reviewer.B0,
     budget: AgentBudget | None = None,
     traces_dir: Path | None = None,
+    split: str = "all",
 ) -> tuple[EvalRunInfo, list[CaseScore], Summary]:
     say = progress or (lambda _message: None)
     budget = (budget or AgentBudget()) if reviewer.agentic else None
@@ -137,6 +139,7 @@ async def run_eval(
         budget=budget,
         code_commit=commit,
         code_dirty=dirty,
+        split=split,
     )
     if traces_dir is not None and reviewer.agentic:
         traces_dir.mkdir(parents=True, exist_ok=True)
@@ -251,7 +254,7 @@ def render_summary(info: EvalRunInfo, scores: list[CaseScore], summary: Summary)
         "",
         f"- Started: {info.started_at}",
         f"- Provider: {info.provider}; judge: {info.judge}; prompt: {info.review_prompt}",
-        f"- Cases: {len(info.cases)}; samples per case: {info.samples}; "
+        f"- Cases: {len(info.cases)} (split: {info.split}); samples per case: {info.samples}; "
         f"location tolerance: ±{info.tolerance} lines",
     ]
     if info.code_commit:

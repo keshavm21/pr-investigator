@@ -1,0 +1,32 @@
+id: clean-werkzeug-content-type-helper
+kind: clean
+split: test
+fixture: werkzeug
+title: Factor out the text mimetype check
+description: |
+  Name the condition in get_content_type. No behaviour change.
+edits:
+- path: src/werkzeug/utils.py
+  find: |2
+        if (
+            mimetype.startswith("text/")
+            or mimetype in _charset_mimetypes
+            or mimetype.endswith("+xml")
+        ):
+            mimetype += f"; charset={charset}"
+
+        return mimetype
+  replace: |2
+        if _wants_charset(mimetype):
+            mimetype += f"; charset={charset}"
+
+        return mimetype
+
+
+    def _wants_charset(mimetype: str) -> bool:
+        """Whether a mimetype is text and so should carry a charset."""
+        return (
+            mimetype.startswith("text/")
+            or mimetype in _charset_mimetypes
+            or mimetype.endswith("+xml")
+        )

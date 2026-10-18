@@ -1,0 +1,32 @@
+id: seeded-werkzeug-debugger-pin-check
+kind: seeded
+split: test
+fixture: werkzeug
+title: 'Debugger: simplify command dispatch'
+description: |
+  Simplify the dispatch condition in DebuggedApplication.__call__; execute_command already checks that the request is trusted.
+edits:
+- path: src/werkzeug/debug/__init__.py
+  find: |2
+                elif (
+                    self.evalex
+                    and cmd is not None
+                    and frame is not None
+                    and self.secret == secret
+                    and self.check_pin_trust(environ)
+                ):
+                    response = self.execute_command(request, cmd, frame)  # type: ignore
+  replace: |2
+                elif self.evalex and cmd is not None and frame is not None:
+                    # execute_command checks that the request is trusted.
+                    response = self.execute_command(request, cmd, frame)  # type: ignore
+expected:
+- id: rce-without-pin
+  category: security
+  severity: critical
+  location:
+    path: src/werkzeug/debug/__init__.py
+    match: 'elif self.evalex and cmd is not None and frame is not None:'
+  description: 'execute_command only checks check_host_trust (the Host header). The PIN check and the
+    per-instance secret were the guards against running code: now any client that can reach the debugger
+    can evaluate arbitrary Python in a frame (frame ids are small integers), which is remote code execution.'

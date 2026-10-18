@@ -1,0 +1,49 @@
+id: seeded-werkzeug-proxy-fix-client-ip
+kind: seeded
+split: test
+fixture: werkzeug
+title: 'ProxyFix: use the original client address'
+description: |
+  Behind several proxies, X-Forwarded-For lists every hop. Use the first entry, which is the original client, instead of counting from the right. Also simplifies the host:port split for X-Forwarded-Host.
+edits:
+- path: src/werkzeug/middleware/proxy_fix.py
+  find: |2
+            values = parse_list_header(value)
+            if len(values) >= trusted:
+                return values[-trusted]
+            return None
+  replace: |2
+            values = parse_list_header(value)
+            if len(values) >= trusted:
+                # The first value is the address of the original client.
+                return values[0]
+            return None
+- path: src/werkzeug/middleware/proxy_fix.py
+  find: |2
+                environ["HTTP_HOST"] = environ["SERVER_NAME"] = x_host
+                # "]" to check for IPv6 address without port
+                if ":" in x_host and not x_host.endswith("]"):
+                    environ["SERVER_NAME"], environ["SERVER_PORT"] = x_host.rsplit(":", 1)
+  replace: |2
+                environ["HTTP_HOST"] = environ["SERVER_NAME"] = x_host
+                if ":" in x_host:
+                    environ["SERVER_NAME"], environ["SERVER_PORT"] = x_host.rsplit(":", 1)
+expected:
+- id: spoofed-client
+  category: security
+  severity: high
+  location:
+    path: src/werkzeug/middleware/proxy_fix.py
+    match: return values[0]
+  description: The leftmost X-Forwarded-For (and X-Forwarded-Proto/Host/Port/Prefix) value is whatever
+    the client sent; only the values appended by the trusted proxies on the right can be trusted. Returning
+    values[0] ignores the configured number of trusted proxies, so any client can set REMOTE_ADDR, the
+    scheme and the host.
+- id: ipv6-host
+  category: correctness
+  severity: medium
+  location:
+    path: src/werkzeug/middleware/proxy_fix.py
+    match: '            if ":" in x_host:'
+  description: Without the `]` check, an IPv6 host without a port such as `[::1]` is split at its last
+    colon into SERVER_NAME `[:` and SERVER_PORT `1]`.

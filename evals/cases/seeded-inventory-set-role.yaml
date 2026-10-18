@@ -1,0 +1,52 @@
+id: seeded-inventory-set-role
+kind: seeded
+split: test
+fixture: inventory_service
+title: Let admins change a user's role
+description: |
+  Admin endpoint to change a user's role, with an optional notification email.
+edits:
+- path: app/routes/admin.py
+  find: |
+    from app.db import db
+  replace: |
+    from app.db import db
+    from app.notifications import send_email
+    from app.users import get_user
+- path: app/routes/admin.py
+  find: |2
+            raise HTTPError(404, "user not found")
+        return Response(status=204)
+  replace: |2
+            raise HTTPError(404, "user not found")
+        return Response(status=204)
+
+
+    @router.post("/users/{user_id}/role")
+    def set_role(request: Request, user_id: str) -> Response:
+        payload = request.json()
+        role = payload["role"]
+        notify = payload.get("notify", True)
+        db.execute("UPDATE users SET role = ? WHERE id = ?", (role, int(user_id)))
+        if not notify:
+            return Response(status=204)
+        user = get_user(db, int(user_id))
+        send_email(user.email, "Your role has changed", f"You are now {role}.")
+        return Response(status=204)
+expected:
+- id: unvalidated-role
+  category: correctness
+  severity: medium
+  location:
+    path: app/routes/admin.py
+    match: '    role = payload["role"]'
+  description: The role isn't checked against auth.ROLE_RANK. A typo or unknown role is stored, and every
+    later check_role for that user fails with KeyError (HTTP 500), locking the account out.
+- id: none-user
+  category: reliability
+  severity: medium
+  location:
+    path: app/routes/admin.py
+    match: send_email(user.email,
+  description: get_user returns None for an unknown id (the UPDATE silently changes no rows), so user.email
+    raises AttributeError (HTTP 500) instead of a 404.

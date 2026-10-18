@@ -1,0 +1,44 @@
+id: decoy-inventory-export-write
+kind: decoy
+split: test
+fixture: inventory_service
+title: Generate top-item exports
+description: |
+  Staff can generate a CSV export of the top items, saved under a chosen name.
+edits:
+- path: app/routes/exports.py
+  find: |
+    from app.auth import require_role
+  replace: |
+    import csv
+    import io
+
+    from app.auth import require_role
+    from app.db import db
+    from app.reports import top_items
+- path: app/routes/exports.py
+  find: |2
+        return Response.file(path.read_bytes(), filename=path.name)
+  replace: |2
+        return Response.file(path.read_bytes(), filename=path.name)
+
+
+    @router.post("/{name}")
+    @require_role("staff")
+    def create_export(request: Request, name: str) -> Response:
+        try:
+            path = safe_join(EXPORT_DIR, name)
+        except ValueError:
+            raise HTTPError(400, "invalid export name") from None
+        buffer = io.StringIO()
+        rows = top_items(db, "price", 100)
+        csv.writer(buffer).writerows((row["id"], row["name"], row["price"]) for row in rows)
+        path.write_text(buffer.getvalue())
+        return Response.json({"export": path.name}, status=201)
+must_not_flag:
+- location:
+    path: app/routes/exports.py
+    match: path.write_text(buffer.getvalue())
+  reason: name comes from the URL, but storage.safe_join resolves the path and rejects anything outside
+    EXPORT_DIR (ValueError, turned into a 400), so the write can't escape the export directory; the endpoint
+    requires the staff role.

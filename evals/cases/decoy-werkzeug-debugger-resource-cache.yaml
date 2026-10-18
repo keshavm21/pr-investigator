@@ -1,0 +1,28 @@
+id: decoy-werkzeug-debugger-resource-cache
+kind: decoy
+split: dev
+fixture: werkzeug
+title: Cache debugger static resources
+description: |
+  The debugger's CSS and JavaScript never change for a release; let browsers cache them.
+edits:
+- path: src/werkzeug/debug/__init__.py
+  find: |2
+                return send_file(
+                    BytesIO(data), request.environ, download_name=filename, etag=etag
+                )
+  replace: |2
+                return send_file(
+                    BytesIO(data),
+                    request.environ,
+                    download_name=filename,
+                    etag=etag,
+                    max_age=86400,
+                )
+must_not_flag:
+- location:
+    path: src/werkzeug/debug/__init__.py
+    match: '                download_name=filename,'
+  reason: filename comes from the query string, but get_resource only reads shared/<basename(filename)>
+    from the package with pkgutil.get_data, so it can't reach other files, and download_name only names
+    the download.

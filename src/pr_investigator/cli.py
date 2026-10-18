@@ -39,6 +39,7 @@ ProviderOpt = Annotated[
 ]
 ModelOpt = Annotated[str | None, typer.Option("--model", help="Model (overrides PRI_LLM_MODEL).")]
 CasesOpt = Annotated[Path, typer.Option("--cases-dir", help="Directory of case manifests.")]
+SplitOpt = Annotated[str, typer.Option("--split", help="Which cases: dev, test (held out) or all.")]
 FixturesOpt = Annotated[Path, typer.Option("--fixtures-dir", help="Directory of fixtures.")]
 
 
@@ -221,14 +222,16 @@ def doctor() -> None:
 
 
 @eval_app.command("list")
-def eval_list(cases_dir: CasesOpt = Path("evals/cases")) -> None:
+def eval_list(cases_dir: CasesOpt = Path("evals/cases"), split: SplitOpt = "all") -> None:
     """List evaluation cases."""
     try:
-        cases = load_cases(cases_dir)
+        cases = load_cases(cases_dir, split=split)
     except PRIError as exc:
         raise _fail(exc) from exc
     for case in cases:
-        console.print(f"{case.id:<40} {case.kind.value:<7} {case.title}")
+        console.print(
+            f"{case.id:<44} {case.split:<5} {case.kind.value:<7} {case.fixture:<18} {case.title}"
+        )
 
 
 @eval_app.command("validate")
@@ -270,11 +273,12 @@ def eval_run(
     traces: Annotated[
         bool, typer.Option(help="Write a trace per case to <results>/traces (a1 and a2 only).")
     ] = True,
+    split: SplitOpt = "all",
 ) -> None:
     """Run a reviewer over the evaluation cases and score it."""
     try:
         settings = _settings(provider, model)
-        cases = load_cases(cases_dir, only=case)
+        cases = load_cases(cases_dir, only=case, split=split)
         budget = RequestBudget(max_requests)
         client = build_client(settings, budget=budget)
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -291,6 +295,7 @@ def eval_run(
                 progress=lambda message: console.print(f"[dim]{message}[/]"),
                 reviewer=reviewer,
                 traces_dir=out_dir / "traces" if traces else None,
+                split=split,
             )
         )
     except PRIError as exc:

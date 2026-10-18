@@ -1,0 +1,27 @@
+id: seeded-werkzeug-input-stream-fallback
+kind: seeded
+split: dev
+fixture: werkzeug
+title: Support chunked uploads without Content-Length
+description: |
+  Servers that don't set wsgi.input_terminated still send chunked bodies, and returning an empty stream silently drops them. Pass the stream through instead.
+edits:
+- path: src/werkzeug/wsgi.py
+  find: |2
+        if content_length is None:
+            return io.BytesIO() if safe_fallback else stream
+  replace: |2
+        if content_length is None:
+            # Chunked requests have no Content-Length; read them as sent.
+            return stream
+expected:
+- id: unbounded-stream
+  category: reliability
+  severity: high
+  location:
+    path: src/werkzeug/wsgi.py
+    match: Chunked requests have no Content-Length
+    span: 2
+  description: 'Without Content-Length and without a server that terminates the stream, wsgi.input is
+    unbounded. Callers rely on get_input_stream to limit it: form parsing reads the whole stream at once
+    (_parse_urlencoded), so a client can tie up a worker or exhaust memory. safe_fallback is now ignored.'

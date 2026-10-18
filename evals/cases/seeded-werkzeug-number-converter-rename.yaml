@@ -1,0 +1,65 @@
+id: seeded-werkzeug-number-converter-rename
+kind: seeded
+split: test
+fixture: werkzeug
+title: Rename the number converters' signed flag
+description: |
+  `signed` reads oddly next to `fixed_digits`; `allow_negative` says what it does. Updates IntegerConverter and FloatConverter and their docstrings.
+edits:
+- path: src/werkzeug/routing/converters.py
+  find: |2
+            fixed_digits: int = 0,
+            min: int | None = None,
+            max: int | None = None,
+            signed: bool = False,
+        ) -> None:
+            if signed:
+                self.regex = self.signed_regex
+            super().__init__(map)
+            self.fixed_digits = fixed_digits
+            self.min = min
+            self.max = max
+            self.signed = signed
+  replace: |2
+            fixed_digits: int = 0,
+            min: int | None = None,
+            max: int | None = None,
+            allow_negative: bool = False,
+        ) -> None:
+            if allow_negative:
+                self.regex = self.signed_regex
+            super().__init__(map)
+            self.fixed_digits = fixed_digits
+            self.min = min
+            self.max = max
+            self.allow_negative = allow_negative
+- path: src/werkzeug/routing/converters.py
+  find: '        Rule("/page/<int(signed=True):page>")'
+  replace: '        Rule("/page/<int(allow_negative=True):page>")'
+- path: src/werkzeug/routing/converters.py
+  find: '        Rule("/offset/<float(signed=True):offset>")'
+  replace: '        Rule("/offset/<float(allow_negative=True):offset>")'
+- path: src/werkzeug/routing/converters.py
+  find: |2
+            min: float | None = None,
+            max: float | None = None,
+            signed: bool = False,
+        ) -> None:
+            super().__init__(map, min=min, max=max, signed=signed)  # type: ignore
+  replace: |2
+            min: float | None = None,
+            max: float | None = None,
+            allow_negative: bool = False,
+        ) -> None:
+            super().__init__(map, min=min, max=max, allow_negative=allow_negative)  # type: ignore
+expected:
+- id: rule-strings-break
+  category: correctness
+  severity: high
+  location:
+    path: src/werkzeug/routing/converters.py
+    match: '        if allow_negative:'
+  description: 'Rules pass converter arguments as keywords from the rule string (`<int(signed=True):page>`),
+    through Map.converters and Rule.get_converter, so no code calls the converter classes by name. Removing
+    the `signed` keyword breaks every existing rule that uses it, including those in tests/test_routing.py:
+    building the Map raises TypeError.'

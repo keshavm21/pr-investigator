@@ -1,0 +1,40 @@
+id: seeded-werkzeug-safe-join-dotdot
+kind: seeded
+split: test
+fixture: werkzeug
+title: Simplify safe_join path checks
+description: |
+  posixpath.normpath already collapses `..` segments, so the explicit `..` checks in safe_join are redundant. This makes the condition shorter and easier to read.
+edits:
+- path: src/werkzeug/security.py
+  find: |2
+            part = posixpath.normpath(part)
+
+            if (
+                os.path.isabs(part)
+                # ntpath.isabs doesn't catch this
+                or part.startswith("/")
+                or part == ".."
+                or part.startswith("../")
+                or any(sep in part for sep in _os_alt_seps)
+  replace: |2
+            # normpath collapses "a/../b" style segments, so ".." can't survive it.
+            part = posixpath.normpath(part)
+
+            if (
+                os.path.isabs(part)
+                # ntpath.isabs doesn't catch this
+                or part.startswith("/")
+                or any(sep in part for sep in _os_alt_seps)
+expected:
+- id: traversal
+  category: security
+  severity: critical
+  location:
+    path: src/werkzeug/security.py
+    match: normpath collapses "a/../b" style
+    span: 6
+  description: 'normpath only collapses `..` that follows another segment: normpath(''../secret'') is
+    still ''../secret''. With the `..` checks removed, safe_join returns paths outside the base directory,
+    and send_from_directory and SharedDataMiddleware, which rely on it for client-supplied paths, can
+    serve arbitrary files.'

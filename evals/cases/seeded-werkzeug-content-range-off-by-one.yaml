@@ -1,0 +1,21 @@
+id: seeded-werkzeug-content-range-off-by-one
+kind: seeded
+split: test
+fixture: werkzeug
+title: Fix the Content-Range end value
+description: |
+  range_for_length already returns the last byte position, so subtracting one again under-reports the range in the Content-Range header.
+edits:
+- path: src/werkzeug/datastructures/range.py
+  find: '            return f"{self.units} {range[0]}-{range[1] - 1}/{length}"'
+  replace: '            return f"{self.units} {range[0]}-{range[1]}/{length}"'
+expected:
+- id: off-by-one
+  category: correctness
+  severity: medium
+  location:
+    path: src/werkzeug/datastructures/range.py
+    match: return f"{self.units} {range[0]}-{range[1]}/{length}"
+  description: range_for_length returns a half-open (start, stop) pair (Range.ranges are non-inclusive,
+    and the response sends stop - start bytes), while Content-Range uses an inclusive last-byte position.
+    The header now claims one byte more than the body contains.

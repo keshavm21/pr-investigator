@@ -1,0 +1,25 @@
+id: clean-werkzeug-plain-int-docs
+kind: clean
+split: dev
+fixture: werkzeug
+title: Clarify _plain_int's docstring
+description: |
+  Documentation only.
+edits:
+- path: src/werkzeug/_internal.py
+  find: |2-
+        """Parse an int only if it is only ASCII digits and ``-``.
+
+        This disallows ``+``, ``_``, and non-ASCII digits, which are accepted by ``int`` but
+        are not allowed in HTTP header values.
+
+        Any leading or trailing whitespace is stripped
+        """
+  replace: |2-
+        """Parse an int made only of ASCII digits and an optional leading ``-``.
+
+        ``int`` also accepts ``+``, ``_`` and non-ASCII digits, which are not allowed in HTTP
+        header values, so those are rejected with ``ValueError``.
+
+        Leading and trailing spaces and tabs are stripped first.
+        """

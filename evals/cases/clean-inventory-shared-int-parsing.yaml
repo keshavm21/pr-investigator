@@ -1,0 +1,45 @@
+id: clean-inventory-shared-int-parsing
+kind: clean
+split: dev
+fixture: inventory_service
+title: Share integer parsing between validators
+description: |
+  parse_positive_int and parse_offset parsed integers the same way; use one helper.
+edits:
+- path: app/validators.py
+  find: |-
+    def parse_positive_int(raw: str | None, default: int, maximum: int) -> int:
+        if raw is None:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            raise HTTPError(400, "expected an integer") from None
+        if value < 1:
+  replace: |-
+    def _parse_int(raw: str) -> int:
+        try:
+            return int(raw)
+        except ValueError:
+            raise HTTPError(400, "expected an integer") from None
+
+
+    def parse_positive_int(raw: str | None, default: int, maximum: int) -> int:
+        if raw is None:
+            return default
+        value = _parse_int(raw)
+        if value < 1:
+- path: app/validators.py
+  find: |2-
+        if raw is None:
+            return 0
+        try:
+            value = int(raw)
+        except ValueError:
+            raise HTTPError(400, "expected an integer") from None
+        if value < 0:
+  replace: |2-
+        if raw is None:
+            return 0
+        value = _parse_int(raw)
+        if value < 0:
