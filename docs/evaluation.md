@@ -65,6 +65,10 @@ Addressed rate is the same signal behind Cursor's "resolution rate" and Martian'
    - **Clean:** ordinary refactors and features with no known issue.
 
    The target is about 10 cases in Phase 1 and 30–40 by Phase 7, roughly 60% seeded, 20% decoy and 20% clean. The cases are written after the models' training cutoff, so they can't be memorized.
+
+   **Suite v2 (Phase 3, D26)** has 30 cases on two fixtures: the original `inventory_service` and an unmodified snapshot of Werkzeug 3.1.9 (BSD-3-Clause). The 20 new cases add PRs with two issues each, context that is only reachable indirectly (converter arguments passed as keywords from route strings, a security check moved out of a dispatcher), convention breaks, and decoys that are safe because of code outside the diff. Werkzeug is known to models from training; the seeded bugs are new.
+
+   **Dev/test split.** Each case has a `split`. The 15 dev cases (the 10 Phase 1 cases and 5 new ones) may be used while building tools and prompts; the 15 test cases (13 seeded issues, 3 decoys, 2 clean) are held out, and results are reported on them with `pri eval run --split test`. A fix motivated by a test case would be tuning to the benchmark, so test-split failures are only analyzed, never patched against.
 2. **Historical real bugs (optional).** Python bugs from BugsInPy and Python CVE fixes from CVEfixes or MoreFixes. Each becomes a PR that reintroduces the bug (by reverting the fix on top of the fixed version), or uses the original bug-introducing commit. These bugs are real but may be memorized by models; results are reported separately.
 3. **External benchmarks (optional).** For comparison with published tools, one of:
    - a Python subset of Qodo PR-Review-Bench (100 PRs, 580 injected issues, MIT licence)

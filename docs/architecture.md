@@ -508,7 +508,7 @@ Phase 2's prompts are `planner.v1`, `investigator.v3`, `single_agent.v3` and `ag
 
 ## 9. Data model
 
-From Phase 3, everything lives in Postgres (D10). Until then, each run is files under `.pri/runs/<run id>/`: `run.json` (the full result: findings with their evidence and, for agentic reviewers, suspects, investigations, outcomes, budgets and request counts), `review.md`, and for A1 and A2 `trace.jsonl`. Domain objects are typed models in code. JSONB holds stage outputs and verdicts, whose shape evolves quickly.
+From Phase 5, everything lives in Postgres (D10, revised 2026-10-18). Phase 3 adds a structural index as a SQLite file under `.pri/`, keyed by blob SHA. Until Phase 5, each run is files under `.pri/runs/<run id>/`: `run.json` (the full result: findings with their evidence and, for agentic reviewers, suspects, investigations, outcomes, budgets and request counts), `review.md`, and for A1 and A2 `trace.jsonl`. Domain objects are typed models in code. JSONB holds stage outputs and verdicts, whose shape evolves quickly.
 
 | Table | Key contents | Notes |
 |---|---|---|
@@ -568,10 +568,10 @@ Every row belongs to one installation, directly or through its parent, and every
 | Parsing | tree-sitter with a prebuilt language pack | Fast, error-tolerant, multi-language, queryable | Python `ast` (Python-only, fails on syntax errors), LSP/SCIP |
 | Lexical search | ripgrep | Fast, respects ignore files, linear-time regex engine (agent-supplied patterns can't cause catastrophic backtracking), JSON output | `git grep` |
 | Static analysis | Semgrep CE or Opengrep (D12) | Runs locally without building the code; pattern and taint rules; JSON/SARIF output | CodeQL: deeper dataflow, but heavy and licence-restricted for non-open-source code |
-| Storage | Postgres with pgvector (D10) | One store for relational data, vectors, full-text search and the queue | SQLite with sqlite-vec; a dedicated vector database |
+| Storage | A SQLite file for the Phase 3 index; Postgres with pgvector from Phase 5 (D10) | One store for relational data, vectors, full-text search and the queue | SQLite with sqlite-vec; a dedicated vector database |
 | Queue | procrastinate (D11) | Postgres-backed, async, retries, queueing locks | arq or RQ (Redis), Celery, Temporal or DBOS |
 | ORM and migrations | SQLAlchemy 2, Alembic | Standard | SQLModel, raw SQL |
-| Embeddings | A local open-weight model, decided in Phase 3 (D9) | Free, and code stays on your machine | A free embedding API; Voyage's code model (paid) |
+| Embeddings | A local open-weight model, only if the Phase 3 ablations call for semantic retrieval (D8, D9) | Free, and code stays on your machine | A free embedding API; Voyage's code model (paid) |
 | CLI | Typer | Small, typed | Click |
 | Packaging and deploy | Docker, Compose, Caddy | Simple, portable | A PaaS |
 
@@ -603,7 +603,7 @@ pr-investigator/
 │   ├── review/               # B0, the shared reviewer entry point, run reports
 │   └── evaluation/           # cases, materialization, matching, metrics, runner
 ├── evals/
-│   ├── fixtures/             # base projects the cases change (inventory_service)
+│   ├── fixtures/             # base projects the cases change (inventory_service, werkzeug)
 │   ├── cases/                # case manifests (YAML)
 │   └── results/              # committed results; agentic runs add traces/
 ├── tests/                    # unit/, integration/, live/ (opt-in), support.py

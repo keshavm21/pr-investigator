@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Status (2026-10-18):** Phase 1 is complete: merged, B0 baseline committed, CI green. Phase 2 is implemented and evaluated: on the 10 cases (2 samples), A2 reached 86% precision and 100% recall, A1 100% and 100%, against B0's 100% and 67%, with every reported finding backed by verified evidence ([results](../evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)). D5 is decided: A1 is the default for `pri review`, and A2 stays available. Next: merging Phase 2. No phase starts until it is approved.
+> **Status (2026-10-18):** Phases 1 and 2 are complete and merged. Phase 2's agentic reviewers find issues the baseline misses, with every finding backed by verified evidence; A1 is the default reviewer (D5). Phase 3 is approved and under way: eval suite v2 is built (30 cases, with a held-out test split); its live baselines need approval. No phase starts until it is approved.
 
 The order follows risk. The most uncertain question is whether agentic investigation produces precise, evidence-backed findings at acceptable cost, so it gets built and measured first. GitHub App plumbing and the UI are well-understood engineering and come later.
 
@@ -167,7 +167,7 @@ A2 and A1 can run on different days to stay inside 500 requests/day.
 | 6 | Eval runner and metrics, end-to-end tests on real cases | Done |
 | 7 | Full offline checks; docs aligned with the code | Done |
 | 8 | Live runs, each approved separately: A2 smoke review, A2 and A1 evals, fixes for submission formatting, final 2-sample runs; then the comparison | Done ([results](../evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)) |
-| 9 | Decide D5: A1 becomes the default for `pri review`, A2 stays available (2026-10-18); merge Phase 2 into `main` | D5 done; merge next |
+| 9 | Decide D5: A1 becomes the default for `pri review`, A2 stays available (2026-10-18); merge Phase 2 into `main` | Done (merged 2026-10-18, PR #1) |
 
 Choices made while building, beyond the decisions above (details in [architecture.md](architecture.md) §4.6–4.8):
 
@@ -190,39 +190,50 @@ Choices made while building, beyond the decisions above (details in [architectur
 
 ## Phase 3: Repository intelligence and retrieval
 
-**Goal:** give the planner and investigators structural and semantic knowledge of the repository, and measure whether it helps.
+**Goal:** give the reviewers structural knowledge of the repository, and measure whether it helps.
 
-**Essential**
+**Approved plan (2026-10-18).** Phase 2 changed the starting point. A1 already scores 100% precision and recall on the 10 Phase 1 cases, so no addition could show an improvement there: each seeded case has one issue in a 20-file fixture where plain search finds everything. So Phase 3 first builds a harder suite, then adds only the cheap, likely-useful parts, and lets the ablations decide the rest (invariant 8). No new infrastructure arrives without data showing it's needed.
 
-- **Indexing.**
-  - tree-sitter: deep for Python, generic tags queries for other languages
-  - content-addressed by blob SHA, with per-commit snapshots
-  - symbols, imports and call sites
-- **Tools:** `find_symbol`, `find_references` (heuristic, with results labelled as such), `get_symbol_context`, `find_tests` and `git_history`.
-- **Context pack and repository profile** (deterministic): enclosing symbols, callers and callees, related tests and config.
-- **Semantic retrieval.**
-  - AST-aware chunking
-  - embeddings stored in pgvector
-  - hybrid search (full-text plus vector, merged with RRF)
-  - the `semantic_search` tool
-- **Leads.**
-  - Semgrep/Opengrep alerts new in head (decide D12 after a short spike)
-  - tree-sitter-based risk signals
-  - convention-deviation leads
-  - hidden-Unicode and agent-instruction-file signals
-- **Eval.** B1 becomes available. Run A2 with and without the structural tools and semantic retrieval, and compare embedding neighbours with structural neighbours for convention leads.
+**Decisions** (see [decisions.md](decisions.md)):
 
-**Optional in this phase:** the `structural_search` tool (ast-grep), and a small hand-labelled retrieval set for recall@k.
+- **D26:** eval suite v2 with a held-out test split and a second, larger fixture (a Werkzeug snapshot), built before any retrieval work.
+- **D7:** tree-sitter for code intelligence, Python only.
+- **D10:** the structural index is a SQLite file under `.pri/`; Postgres, pgvector, Docker Compose and Alembic move to Phase 5.
+- **D8/D9:** semantic retrieval and embeddings are deferred, and built only if the ablations show misses that search and structure can't solve.
+- **D12:** a static analyzer is deferred; tree-sitter risk signals come first.
+- New tools go to A1 (the default reviewer) first. A2 gets them too, because the two share the loop.
+
+**Steps**
+
+| Step | Content | State |
+|---|---|---|
+| 0 | Close out Phase 2: status lines, a demo from a committed trace | Done |
+| 1 | Eval suite v2: 20 new cases (multi-issue PRs, context reached through registries and rule strings, convention breaks, more decoys), the Werkzeug fixture, a dev/test split; then B0, A1 and A2 baselines on it | Cases built and validated; live baselines need approval |
+| 2 | Structural index (tree-sitter, Python, keyed by blob SHA, SQLite) and tools: `find_symbol`, `find_references` (name-based, labelled), `get_symbol_context`, `find_tests`, `git_history`, all with exact observations | Planned |
+| 3 | Deterministic context pack (callers, callees, tests, config of each changed function); B1 (one call with the diff and the pack); optional pack in A1's opening | Planned |
+| 4 | Deterministic leads: hidden Unicode, edits to agent instruction files, tree-sitter risk signals; each lead must be addressed or dismissed | Planned |
+| 5 | Ablations on the test split (A1 with and without the tools and the pack, B0 vs B1, A2 vs A1 on multi-issue cases); keep, narrow or drop each component | Planned |
+| 6 | Only if step 5 shows the need: semantic retrieval; a Semgrep/Opengrep spike | Conditional |
+
+**Eval suite v2** (step 1). 30 cases, `pri eval list` shows them:
+
+| Split | Cases | Seeded (issues) | Decoys | Clean | Fixtures |
+|---|---|---|---|---|---|
+| dev | 15: the 10 Phase 1 cases, plus 5 new | 8 (8) | 3 | 4 | inventory_service, werkzeug |
+| test (held out) | 15 new | 10 (13) | 3 | 2 | inventory_service, werkzeug |
+
+Results are reported on the test split (`pri eval run --split test`). Dev cases may be used while building tools and prompts; test cases may not. The Werkzeug fixture is Werkzeug 3.1.9 (BSD-3-Clause), vendored unmodified with its licence (`evals/fixtures/werkzeug/FIXTURE.md`). Models have seen Werkzeug in training; the seeded bugs are new, and results will say so.
 
 **Exit criteria**
 
-- Re-indexing a PR head only processes changed blobs.
-- Ablation numbers are committed.
-- Semantic retrieval is kept, narrowed or dropped based on the data.
+- Suite v2 exists with a held-out test split, and B0, A1 and A2 baselines on it are committed.
+- Re-indexing a new head only processes changed files.
+- Ablation results are committed for each added component, each with a keep, narrow or drop decision.
+- Every new tool keeps the exact-observation guarantee, and verified evidence stays at 100%.
 
-**Also in this phase (moved from Phase 1):** Docker Compose with Postgres (pgvector image) and Alembic migrations. Runs, findings and traces move from JSON files into the database.
+**Optional in this phase:** the `structural_search` tool (ast-grep), and a small hand-labelled retrieval set for recall@k.
 
-**Main risks:** imprecise name-based references (labelled; S2 is the fallback), and the cost of the first index on large repositories (exclusions and caps).
+**Main risks:** imprecise name-based references (labelled; language servers, S2, are the fallback); the cost of the first index on large repositories (exclusions and caps); a suite still too easy to separate the configurations (add cases to the test split, never tune on it).
 
 ---
 
@@ -280,6 +291,8 @@ Choices made while building, beyond the decisions above (details in [architectur
 - **Review decisions** stored as labelled feedback.
 - **CLI publish path:** `pri publish <run> --approve ...`.
 - **Simple auth:** a single-user token for local or demo use.
+
+**Also in this phase (moved from Phase 3, D10):** Docker Compose with Postgres (pgvector image) and Alembic migrations. Runs, findings and traces move from JSON files into the database, which the review UI needs.
 
 **Exit criteria:** approving findings in the UI produces a review on a test PR with correct line anchors, and rejections are recorded with reasons.
 

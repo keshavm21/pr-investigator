@@ -2,7 +2,7 @@
 
 An evidence-driven AI reviewer for GitHub pull requests. Instead of sending a diff to an LLM and posting whatever comes back, it forms hypotheses, investigates them with read-only tools across the repository, verifies what it finds, and lets a human approve what gets posted.
 
-> **Status: Phase 2 of 7, built and evaluated.** Phase 1 laid the foundation: PR ingestion, read-only repository tools, a one-call baseline reviewer (B0) to measure later phases against, and the evaluation harness. Phase 2 adds agentic investigation: a planner lists suspected problems, a bounded agent investigates each one with the read-only tools, and every reported finding must cite lines the tools actually showed, checked mechanically against the analyzed commit. On the evaluation cases, both agentic reviewers find issues the baseline misses because they need code outside the diff, with every finding backed by verified evidence ([results](evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)). See the [implementation plan](docs/implementation-plan.md).
+> **Status: Phase 3 of 7 under way; Phases 1 and 2 complete.** Phase 1 laid the foundation: PR ingestion, read-only repository tools, a one-call baseline reviewer (B0) to measure later phases against, and the evaluation harness. Phase 2 adds agentic investigation: a planner lists suspected problems, a bounded agent investigates each one with the read-only tools, and every reported finding must cite lines the tools actually showed, checked mechanically against the analyzed commit. On the evaluation cases, both agentic reviewers find issues the baseline misses because they need code outside the diff, with every finding backed by verified evidence ([results](evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)). Phase 3 adds structural repository knowledge, measured on a harder suite with a held-out test split. See the [implementation plan](docs/implementation-plan.md).
 
 ## Quick start
 
@@ -23,6 +23,37 @@ uv run pri eval run       # score the baseline on the evaluation cases
 Reviewers: `a1` (the default) runs one bounded agent loop over the whole PR (up to 12 requests); `a2` runs a planner, then one bounded investigation per suspect (up to about 26 requests per PR); `b0` makes one call on the diff, the Phase 1 baseline. A1 is the default because it matched A2's recall with higher precision and fewer requests in the Phase 2 evaluation (D5 in the [decision register](docs/decisions.md)). `pri eval run` still scores `b0` unless you pass `--reviewer`.
 
 It runs on Gemini's free tier. `.env.example` sets `PRI_LLM_MODEL=gemini-3.5-flash-lite`, the model the evaluation baseline uses (the code default is `gemini-3.8-flash`). Free-tier inputs may be used for training, so PR Investigator refuses to send a private repository's code to it.
+
+## Demo
+
+Every agentic run writes a trace, and `pri show` turns it into a timeline. The committed eval traces need no API key:
+
+```bash
+uv run pri show evals/results/20261017-092740-a1-gemini-3.5-flash-lite/traces/seeded-broken-caller-signature-s1.jsonl
+```
+
+In that case, a PR adds a required `discount` parameter to `calculate_total` but leaves a caller unchanged. The agent searches for callers, reads the one in `app/routes/orders.py`, and has two reports rejected by the evidence check (a missing field, then a defect site outside the diff) before its report is accepted:
+
+```text
+  turn 1: search_code(pattern='calculate_total')
+    -> [Observations you can cite: O5 = search literal 'calculate_total' (7 matches); ...]
+  turn 2: read_file(path='app/routes/orders.py', start_line=1, end_line=45, ref='head')
+  ...
+  turn 6: report_findings(1 findings)
+    submission rejected:
+      - finding 1: defect site app/routes/orders.py:32-32 (head) isn't on lines the PR diff shows; ...
+  turn 8: report_findings(1 findings)
+    submission accepted
+
+F1 [high] calculate_total signature change is not backward compatible and breaks existing callers ...
+  app/pricing.py:12 · correctness · confidence high
+  defect_site app/pricing.py:12-12 (head): calculate_total now requires 3 arguments including discount, ...
+    | def calculate_total(lines: list[OrderLine], tax_rate: Decimal, discount: Decimal) -> Decimal:
+  context app/routes/orders.py:32-32 (head): app/routes/orders.py calls calculate_total with 2 arguments, ...
+    |     total = calculate_total(lines, TAX_RATE)
+```
+
+The quoted code lines are re-read from the repository by the system, never copied from model output.
 
 ## Development
 

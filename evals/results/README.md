@@ -30,7 +30,7 @@ All four matched findings were checked by hand and describe the seeded issue: SQ
 - `seeded-broken-caller-signature`: the broken caller is in a file the diff doesn't touch.
 - `seeded-none-dereference`: the cause is only visible in `users.py`.
 
-**Comparing against it.** Use the same model, cases, sample count and matching mode. With 6 seeded issues, one finding moves recall by about 17 points, so small differences are noise.
+**Comparing against it.** Use the same model, cases, sample count and matching mode. The Phase 1 and Phase 2 runs cover these 10 cases; eval suite v2 (Phase 3) adds 20 more, so name the 10 cases explicitly with `--case` to compare. With 6 seeded issues, one finding moves recall by about 17 points, so small differences are noise.
 
 ## Phase 2: agentic reviewers A2 and A1
 
