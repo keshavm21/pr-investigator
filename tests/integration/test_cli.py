@@ -1,5 +1,6 @@
 """The `pri` CLI end to end, with the offline provider."""
 
+import inspect
 import json
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from pr_investigator.cli import app
+from pr_investigator.review.reviewers import Reviewer
 from tests.support import EVAL_CASES, EVAL_FIXTURES, MakeRepo
 
 runner = CliRunner()
@@ -29,14 +31,25 @@ def test_doctor_runs_without_calling_anything() -> None:
     assert "provider / model" in result.output
 
 
-def test_review_of_a_local_repo_writes_a_run(local_pr: Path, tmp_path: Path) -> None:
+def test_review_of_a_local_repo_uses_a1_by_default(
+    local_pr: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PRI_LLM_REQUESTS_PER_MINUTE", "1000")  # the offline provider is paced too
     result = runner.invoke(
         app, ["review", str(local_pr), "--base", "main", "--head", "pr", "--data-class", "test"]
     )
     assert result.exit_code == 0, result.output
     assert "No findings" in result.output
-    runs = list((tmp_path / "pri-data" / "runs").iterdir())
-    assert len(runs) == 1 and (runs[0] / "run.json").is_file()
+    (run_dir,) = (tmp_path / "pri-data" / "runs").iterdir()
+    assert json.loads((run_dir / "run.json").read_text())["reviewer"] == "a1"
+    assert (run_dir / "trace.jsonl").is_file()
+
+
+def test_eval_run_keeps_b0_as_its_default() -> None:
+    from pr_investigator.cli import eval_run
+
+    defaults = {p.name: p.default for p in inspect.signature(eval_run).parameters.values()}
+    assert defaults["reviewer"] is Reviewer.B0
 
 
 @pytest.mark.parametrize("reviewer", ["a2", "a1"])
@@ -63,7 +76,7 @@ def test_show_falls_back_to_the_report_for_b0_and_rejects_unknown_runs(
     local_pr: Path, tmp_path: Path
 ) -> None:
     args = ["review", str(local_pr), "--base", "main", "--head", "pr", "--data-class", "test"]
-    assert runner.invoke(app, args).exit_code == 0
+    assert runner.invoke(app, [*args, "--reviewer", "b0"]).exit_code == 0
     (run_dir,) = (tmp_path / "pri-data" / "runs").iterdir()
     assert not (run_dir / "trace.jsonl").exists()  # B0 makes one call; no trace
     shown = runner.invoke(app, ["show", run_dir.name])

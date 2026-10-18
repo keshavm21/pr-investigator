@@ -175,7 +175,7 @@ The planner receives the context pack, a review checklist per category, and the 
 - They are visible in the UI, including the refuted ones ("we checked X; it's fine because Y").
 - They allow per-stage evaluation: planner recall separately from investigator precision.
 
-The single-agent alternative is kept as ablation A1 ([evaluation.md](evaluation.md)).
+The single-agent alternative is kept as ablation A1 ([evaluation.md](evaluation.md)). In the Phase 2 evaluation, A1 matched A2's recall with higher precision and fewer requests on cases with one issue each, so A1 is the default for `pri review` (D5). The planner stays, and has to show its value on harder cases with several issues per PR.
 
 **As built in Phase 2** (`agent/planner.py`, prompt `planner.v1`). The planner sees exactly what B0 sees: the untrusted-tagged PR metadata and the line-numbered diff. Each suspect has a title, category, location (path, side, lines), the suspected problem, what would confirm or refute it, and a priority from 1 (most likely serious) to 10. Leads, links between them and dismissed leads arrive with Phase 3. Code then:
 

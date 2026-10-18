@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Status (2026-10-17):** Phase 1 is complete: merged, B0 baseline committed, CI green. Phase 2 is implemented and evaluated: on the 10 cases (2 samples), A2 reached 86% precision and 100% recall, A1 100% and 100%, against B0's 100% and 67%, with every reported finding backed by verified evidence ([results](../evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)). Next: the D5 decision and merging Phase 2. No phase starts until it is approved.
+> **Status (2026-10-18):** Phase 1 is complete: merged, B0 baseline committed, CI green. Phase 2 is implemented and evaluated: on the 10 cases (2 samples), A2 reached 86% precision and 100% recall, A1 100% and 100%, against B0's 100% and 67%, with every reported finding backed by verified evidence ([results](../evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)). D5 is decided: A1 is the default for `pri review`, and A2 stays available. Next: merging Phase 2. No phase starts until it is approved.
 
 The order follows risk. The most uncertain question is whether agentic investigation produces precise, evidence-backed findings at acceptable cost, so it gets built and measured first. GitHub App plumbing and the UI are well-understood engineering and come later.
 
@@ -167,7 +167,7 @@ A2 and A1 can run on different days to stay inside 500 requests/day.
 | 6 | Eval runner and metrics, end-to-end tests on real cases | Done |
 | 7 | Full offline checks; docs aligned with the code | Done |
 | 8 | Live runs, each approved separately: A2 smoke review, A2 and A1 evals, fixes for submission formatting, final 2-sample runs; then the comparison | Done ([results](../evals/results/README.md#phase-2-agentic-reviewers-a2-and-a1)) |
-| 9 | Decide D5 (keep the planner or not, and the default reviewer); merge Phase 2 into `main` | Next |
+| 9 | Decide D5: A1 becomes the default for `pri review`, A2 stays available (2026-10-18); merge Phase 2 into `main` | D5 done; merge next |
 
 Choices made while building, beyond the decisions above (details in [architecture.md](architecture.md) §4.6–4.8):
 

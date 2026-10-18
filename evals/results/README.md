@@ -59,7 +59,7 @@ These are the two runs on the final Phase 2 code, with 2 samples per case (20 re
 
 **A2's two false positives** are the same finding in both samples: the new attachment endpoint reads the whole file into memory before sending it. That is a real but minor performance point that the case's ground truth doesn't label, so the rules count it as a false positive until a human adjudicates it.
 
-**A1 against A2 (ablation for D5).** On this suite, the single agent loop matched A2's recall with higher precision, about 40% fewer requests and about a third fewer tokens. The suite favours it: each seeded case has one issue in one area, so the planner's strengths (separate, visible investigations for several suspects) can't show. Whether to keep the planner, and which reviewer becomes the default, is an open decision ([decisions.md](../../docs/decisions.md), D5).
+**A1 against A2 (ablation for D5).** On this suite, the single agent loop matched A2's recall with higher precision, about 40% fewer requests and about a third fewer tokens. The suite favours it: each seeded case has one issue in one area, so the planner's strengths (separate, visible investigations for several suspects) can't show. Decision (D5, 2026-10-18): A1 is the default for `pri review`; A2 stays available, and the planner has to show its value on harder cases with several issues per PR ([decisions.md](../../docs/decisions.md)).
 
 ### How we got here: earlier Phase 2 runs
 

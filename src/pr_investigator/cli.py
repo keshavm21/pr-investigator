@@ -77,16 +77,16 @@ def review(
         Reviewer,
         typer.Option(
             "--reviewer",
-            help="b0: one call on the diff. a2: planner, then one investigation per suspect. "
-            "a1: one agent loop over the whole PR.",
+            help="a1 (default): one agent loop over the whole PR. a2: planner, then one "
+            "investigation per suspect. b0: one call on the diff (the Phase 1 baseline).",
         ),
-    ] = Reviewer.B0,
+    ] = Reviewer.A1,
     max_requests: Annotated[
         int, typer.Option(min=1, help="Cap on real provider requests (cache hits are free).")
     ] = 30,
     as_json: Annotated[bool, typer.Option("--json", help="Print the result as JSON.")] = False,
 ) -> None:
-    """Review a pull request: B0 by default, or the agentic reviewers A2 and A1."""
+    """Review a pull request with the agentic reviewer A1 (default), A2, or the baseline B0."""
     run_dir: Path | None = None
     try:
         settings = _settings(provider, model)

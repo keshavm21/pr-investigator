@@ -13,14 +13,14 @@ uv sync
 cp .env.example .env      # add GEMINI_API_KEY; use an AI Studio key from a project without billing
 uv run pri doctor         # checks the setup without calling any API
 
-uv run pri review https://github.com/OWNER/REPO/pull/123     # review a public PR (baseline)
-uv run pri review https://github.com/OWNER/REPO/pull/123 --reviewer a2   # agentic review
-uv run pri show RUN_ID    # what an agentic review did: plan, investigations, evidence
+uv run pri review https://github.com/OWNER/REPO/pull/123     # review a public PR (agentic, A1)
+uv run pri review https://github.com/OWNER/REPO/pull/123 --reviewer a2   # planner + investigations
+uv run pri show RUN_ID    # what an agentic review did: its turns, evidence and findings
 uv run pri eval validate  # check the evaluation cases (no LLM calls)
 uv run pri eval run       # score the baseline on the evaluation cases
 ```
 
-Reviewers: `b0` makes one call on the diff; `a2` runs a planner, then one bounded investigation per suspect (up to about 26 requests per PR); `a1` runs one agent loop over the whole PR (up to 12 requests). `b0` stays the default until the decision on which agentic reviewer to keep (D5 in the [decision register](docs/decisions.md)).
+Reviewers: `a1` (the default) runs one bounded agent loop over the whole PR (up to 12 requests); `a2` runs a planner, then one bounded investigation per suspect (up to about 26 requests per PR); `b0` makes one call on the diff, the Phase 1 baseline. A1 is the default because it matched A2's recall with higher precision and fewer requests in the Phase 2 evaluation (D5 in the [decision register](docs/decisions.md)). `pri eval run` still scores `b0` unless you pass `--reviewer`.
 
 It runs on Gemini's free tier. `.env.example` sets `PRI_LLM_MODEL=gemini-3.5-flash-lite`, the model the evaluation baseline uses (the code default is `gemini-3.8-flash`). Free-tier inputs may be used for training, so PR Investigator refuses to send a private repository's code to it.
 
