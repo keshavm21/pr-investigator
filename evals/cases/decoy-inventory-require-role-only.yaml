@@ -1,0 +1,30 @@
+id: decoy-inventory-require-role-only
+kind: decoy
+split: dev
+fixture: inventory_service
+title: Add a restock endpoint
+description: |
+  Staff can add stock to an item. require_role already rejects anonymous requests (it calls current_user), so the route doesn't also need require_login.
+edits:
+- path: app/routes/items.py
+  find: |2
+        db.execute("DELETE FROM items WHERE id = ?", (int(item_id),))
+        return Response(status=204)
+  replace: |2
+        db.execute("DELETE FROM items WHERE id = ?", (int(item_id),))
+        return Response(status=204)
+
+
+    @router.post("/{item_id}/restock")
+    @require_role("staff")
+    def restock_item(request: Request, item_id: str) -> Response:
+        amount = parse_positive_int(request.query.get("amount"), default=1, maximum=1000)
+        db.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (amount, int(item_id)))
+        return Response(status=204)
+must_not_flag:
+- location:
+    path: app/routes/items.py
+    match: def restock_item(
+  reason: As the description says, require_role calls check_role, which calls current_user and raises
+    401 for anonymous requests, so require_login would be redundant. The amount is validated and clamped
+    by parse_positive_int.

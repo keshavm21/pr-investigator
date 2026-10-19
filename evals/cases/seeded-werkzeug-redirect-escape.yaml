@@ -1,0 +1,21 @@
+id: seeded-werkzeug-redirect-escape
+kind: seeded
+split: dev
+fixture: werkzeug
+title: Drop redundant escaping in redirect
+description: |
+  The location is already URL-encoded with iri_to_uri when the Location header is set, so escaping it again for the HTML body is redundant.
+edits:
+- path: src/werkzeug/utils.py
+  find: '    html_location = escape(location)'
+  replace: '    html_location = location'
+expected:
+- id: xss
+  category: security
+  severity: medium
+  location:
+    path: src/werkzeug/utils.py
+    match: '    html_location = location'
+  description: 'URL encoding of the Location header doesn''t make the value safe inside HTML: a location
+    containing a quote or <script> breaks out of the href attribute in the redirect body, so redirecting
+    to user-influenced URLs becomes XSS.'

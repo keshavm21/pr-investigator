@@ -35,14 +35,14 @@ def finding(
 
 def test_suite_has_the_planned_mix_of_cases() -> None:
     cases = load_cases(EVAL_CASES)
-    assert len(cases) == 30
+    assert len(cases) == 34
     # Suite v1: the 10 Phase 1 cases, all dev (they were used while building Phase 2).
     v1 = [c for c in cases if c.fixture == "inventory_service" and "-inventory-" not in c.id]
     assert len(v1) == 10 and {c.split for c in v1} == {"dev"}
 
     test = load_cases(EVAL_CASES, split="test")
     kinds = [c.kind for c in test]
-    assert len(test) == 15 and len(load_cases(EVAL_CASES, split="dev")) == 15
+    assert len(test) == 15 and len(load_cases(EVAL_CASES, split="dev")) == 19
     assert (kinds.count(CaseKind.SEEDED), kinds.count(CaseKind.DECOY)) == (10, 3)
     assert kinds.count(CaseKind.CLEAN) == 2
     assert sum(len(c.expected) for c in test) == 13  # three PRs carry two issues each
@@ -52,7 +52,7 @@ def test_suite_has_the_planned_mix_of_cases() -> None:
 def test_unknown_splits_are_errors() -> None:
     with pytest.raises(EvalCaseError, match="unknown split"):
         load_cases(EVAL_CASES, split="holdout")
-    assert len(load_cases(EVAL_CASES, split="all")) == 30
+    assert len(load_cases(EVAL_CASES, split="all")) == 34
 
 
 @pytest.mark.parametrize("case", load_cases(EVAL_CASES), ids=lambda c: c.id)

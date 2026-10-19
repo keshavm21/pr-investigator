@@ -113,3 +113,45 @@ Eval suite v2 (D26) adds 20 cases, including a Werkzeug 3.1.9 fixture and PRs wi
 
 **Protocol note.** These failures were analyzed on the held-out split. Under D26, any change motivated by them (for example, telling the agent to verify the author's claims) must be developed against dev cases and then measured once on the test split, with the observation's origin stated.
 
+## Claim-checking experiment (dev split)
+
+The test baselines above showed A1 accepting misleading PR descriptions. Under D26, test failures are only analyzed, so the idea was developed on dev cases instead:
+
+- **Four new dev cases.** Three PRs justify a broken change with a false claim: header newlines are "already rejected by WSGI servers", redirect escaping is "redundant after iri_to_uri", the page-size cap is "redundant because of LIMIT". One decoy makes a true claim (a route that only uses `require_role`, which does reject anonymous requests).
+- **One prompt change** (`single_agent.v4`): the title and description are the author's account and can be wrong; treat each claim as a hypothesis to check against the code, judge the change as if an unconfirmed claim hadn't been made, and don't rely on unchanged tests.
+
+| Dev split (19 cases, 11 issues) | A1 `single_agent.v3` | A1 `single_agent.v4` |
+|---|---|---|
+| Precision | 88% | 100% |
+| Recall | **64% (7 of 11)** | 45% (5 of 11) |
+| Decoys flagged | 1 of 4 (the true-claim decoy) | 0 of 4 |
+| Misleading-claim cases found | 1 of 4 | 1 of 4 |
+
+- **Directories:** `20261018-193625-a1-gemini-3.5-flash-lite-dev-v3/` and `20261018-194040-a1-gemini-3.5-flash-lite-dev-v4/` (dev runs; summaries say "with uncommitted changes" because the new dev cases and prompt weren't committed yet). The v3 run replayed the 10 Phase 1 cases from the cache; v4's are fresh, so part of the difference on those cases is run-to-run variation.
+- **Result: no gain, so v4 was not run on the test split**, and the reviewers stay on v3. v4 removed the over-skeptical false positive but still accepted the false claims: its traces restate the author ("removes the newline check since WSGI servers already validate header values") even for a claim that can't be checked inside the repository. On `gemini-3.5-flash-lite`, an instruction alone doesn't make the agent check claims.
+
+## Phase 3: A2 baseline on the test split
+
+Same setup as the B0 and A1 test-split baselines (15 held-out cases, 13 issues, 1 sample, `planner.v1`, `investigator.v3`, `agent_loop.v2`).
+
+| Test split | B0 | A1 | A2 (raw) | A2 (adjudicated) |
+|---|---|---|---|---|
+| Precision | 86% (6 of 7) | 75% (3 of 4) | 73% (8 of 11) | 91% (10 of 11) |
+| Recall | 46% (6 of 13) | 23% (3 of 13) | **62% (8 of 13)** | **77% (10 of 13)** |
+| Decoys flagged | 0 of 3 | 0 of 3 | 1 of 3 | 1 of 3 |
+| Requests per PR (mean / max) | 1 / 1 | 5.5 / 11 | 7.6 / 18 | |
+| Input tokens per PR (mean) | about 1K | about 26K | about 31K | |
+
+- **Directory:** `20261018-194957-a2-gemini-3.5-flash-lite/`, with traces. 114 requests, no retries. The summary says "with uncommitted changes": the four new dev cases and the `v4` prompt files were uncommitted; the reviewer code matched commit `b0479ec`.
+- **Adjudication** (by hand, from the findings and traces; the raw numbers follow the eval rules). Two unmatched findings describe expected issues correctly but sit where location-only matching can't credit them:
+  - the cancellation IDOR is anchored on the `UPDATE` line, 8 lines below the expected lookup line (the tolerance is 3);
+  - the converter rename is anchored on the deleted `signed` parameter (the base side), while the ground truth marks only the head side.
+
+  The remaining false positive is real: on the ProxyFix logging decoy, a low-severity "logs an unvalidated header value" finding next to the must-not-flag line. B0's and A1's unmatched findings were checked the same way; none describes an expected issue.
+
+**What A2 found that neither B0 nor A1 did:** the removed debugger PIN check, ProxyFix's spoofable client address, and the Content-Range off-by-one. The planner turns each PR into explicit suspects with a "what would confirm or refute it" field, and an investigation then checks that specific suspicion. On these cases, that structure got past the misleading descriptions that A1, given only an instruction to be skeptical, accepted.
+
+**Missed by all three:** the anonymous-user crash in the price update. **Missed by A2 only:** the safe_join traversal (B0 found it) and the unchecked user in the role change.
+
+**For D5.** D5 kept A2 available on condition that the planner earns its place on harder cases with several issues per PR. On this split it does: A2 has the highest recall, at about 40% more requests per PR than A1. Changing the default reviewer is a decision for D5.
+

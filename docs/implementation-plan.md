@@ -208,18 +208,19 @@ Choices made while building, beyond the decisions above (details in [architectur
 | Step | Content | State |
 |---|---|---|
 | 0 | Close out Phase 2: status lines, a demo from a committed trace | Done |
-| 1 | Eval suite v2: 20 new cases (multi-issue PRs, context reached through registries and rule strings, convention breaks, more decoys), the Werkzeug fixture, a dev/test split; then B0, A1 and A2 baselines on it | Suite built; B0 and A1 test-split baselines done ([results](../evals/results/README.md#phase-3-suite-v2-baselines-held-out-test-split)): B0 46% recall, A1 23%; A2 baseline pending |
+| 1 | Eval suite v2: 20 new cases (multi-issue PRs, context reached through registries and rule strings, convention breaks, more decoys), the Werkzeug fixture, a dev/test split; then B0, A1 and A2 baselines on it | Done ([results](../evals/results/README.md#phase-3-a2-baseline-on-the-test-split)): test-split recall B0 46%, A1 23%, A2 62% (77% after adjudicating two mislocated correct findings) |
+| 1b | Claim checking: the test baselines showed A1 accepting misleading PR descriptions. Four dev cases with misleading or accurate claims were added, and a prompt telling the agent to verify the author's claims (`single_agent.v4`) was tried on dev only | Done: no gain on dev (recall 45% vs 64%), so it was not run on the test split; reviewers stay on v3 ([results](../evals/results/README.md#claim-checking-experiment-dev-split)) |
 | 2 | Structural index (tree-sitter, Python, keyed by blob SHA, SQLite) and tools: `find_symbol`, `find_references` (name-based, labelled), `get_symbol_context`, `find_tests`, `git_history`, all with exact observations | Planned |
 | 3 | Deterministic context pack (callers, callees, tests, config of each changed function); B1 (one call with the diff and the pack); optional pack in A1's opening | Planned |
 | 4 | Deterministic leads: hidden Unicode, edits to agent instruction files, tree-sitter risk signals; each lead must be addressed or dismissed | Planned |
 | 5 | Ablations on the test split (A1 with and without the tools and the pack, B0 vs B1, A2 vs A1 on multi-issue cases); keep, narrow or drop each component | Planned |
 | 6 | Only if step 5 shows the need: semantic retrieval; a Semgrep/Opengrep spike | Conditional |
 
-**Eval suite v2** (step 1). 30 cases, `pri eval list` shows them:
+**Eval suite v2** (step 1). 34 cases, `pri eval list` shows them:
 
 | Split | Cases | Seeded (issues) | Decoys | Clean | Fixtures |
 |---|---|---|---|---|---|
-| dev | 15: the 10 Phase 1 cases, plus 5 new | 8 (8) | 3 | 4 | inventory_service, werkzeug |
+| dev | 19: the 10 Phase 1 cases, plus 9 new | 11 (11) | 4 | 4 | inventory_service, werkzeug |
 | test (held out) | 15 new | 10 (13) | 3 | 2 | inventory_service, werkzeug |
 
 Results are reported on the test split (`pri eval run --split test`). Dev cases may be used while building tools and prompts; test cases may not. The Werkzeug fixture is Werkzeug 3.1.9 (BSD-3-Clause), vendored unmodified with its licence (`evals/fixtures/werkzeug/FIXTURE.md`). Models have seen Werkzeug in training; the seeded bugs are new, and results will say so.

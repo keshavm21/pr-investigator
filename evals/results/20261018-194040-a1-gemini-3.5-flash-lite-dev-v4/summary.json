@@ -1,0 +1,89 @@
+{
+  "run": {
+    "reviewer": "a1",
+    "started_at": "2026-10-18T19:40:40+00:00",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "judge": "location-only",
+    "samples": 1,
+    "tolerance": 3,
+    "review_prompt": "single_agent.v4, agent_loop.v2",
+    "cases": [
+      "clean-extract-rows-helper",
+      "clean-health-endpoint",
+      "clean-inventory-shared-int-parsing",
+      "clean-werkzeug-plain-int-docs",
+      "decoy-admin-router-auth",
+      "decoy-allowlisted-sort",
+      "decoy-inventory-require-role-only",
+      "decoy-werkzeug-debugger-resource-cache",
+      "seeded-broken-caller-signature",
+      "seeded-inventory-uncapped-limit",
+      "seeded-missing-authorization",
+      "seeded-none-dereference",
+      "seeded-off-by-one-pagination",
+      "seeded-path-traversal-attachments",
+      "seeded-sql-injection-search",
+      "seeded-werkzeug-gen-salt-random",
+      "seeded-werkzeug-header-newlines",
+      "seeded-werkzeug-input-stream-fallback",
+      "seeded-werkzeug-redirect-escape"
+    ],
+    "stopped_early": null,
+    "prompts": {
+      "single_agent.v4": "4d706b70ff3f20291fd5c25ba3f458c91569f44705388c0b17449cce6f1383b6",
+      "agent_loop.v2": "b63bdbfd567685d38031383a63bf9e136d2d33e30ef13db06465d8d2e6cb8900"
+    },
+    "budget": {
+      "max_suspects": 4,
+      "investigation_turns": 6,
+      "single_agent_turns": 12,
+      "max_tool_calls_per_turn": 3,
+      "max_tool_output_chars": 4000,
+      "investigation_diff_chars": 8000,
+      "single_agent_diff_chars": 24000,
+      "max_findings": 4
+    },
+    "code_commit": "b0479ecf49c1d151ef57d8066061b5b216370bf9",
+    "code_dirty": true,
+    "provider_requests": 88,
+    "split": "dev"
+  },
+  "summary": {
+    "runs": 19,
+    "failed_runs": 0,
+    "findings": 5,
+    "true_positives": 5,
+    "partial_matches": 0,
+    "false_positives": 0,
+    "expected_issues": 11,
+    "precision": 1.0,
+    "recall": 0.45454545454545453,
+    "f0_5": 0.8064516129032256,
+    "false_positives_per_clean_run": 0.0,
+    "decoy_trigger_rate": 0.0,
+    "anchor_in_diff_rate": 1.0,
+    "exact_location_rate": 1.0,
+    "input_tokens": 378695,
+    "output_tokens": 4716,
+    "cached_runs": 0,
+    "requests": 88,
+    "cached_requests": 0,
+    "requests_per_run": 4.631578947368421,
+    "max_requests_per_run": 9,
+    "agent": {
+      "suspects": 0,
+      "dropped_suspects": 0,
+      "outcomes": {},
+      "stop_causes": {
+        "submitted": 19
+      },
+      "turns": 88,
+      "tool_calls": 71,
+      "rejections": 1,
+      "duplicates": 0,
+      "retries": 0
+    },
+    "verified_evidence_rate": 1.0
+  }
+}

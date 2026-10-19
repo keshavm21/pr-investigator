@@ -1,0 +1,33 @@
+id: seeded-werkzeug-header-newlines
+kind: seeded
+split: dev
+fixture: werkzeug
+title: Skip duplicate header newline validation
+description: |
+  WSGI servers already reject header values containing newlines, so checking every value here is duplicate work on a hot path.
+edits:
+- path: src/werkzeug/datastructures/headers.py
+  find: |2-
+        if not isinstance(value, str):
+            value = str(value)
+
+        if _newline_re.search(value) is not None:
+            raise ValueError("Header values must not contain newline characters.")
+
+        return value  # type: ignore[no-any-return]
+  replace: |2-
+        if not isinstance(value, str):
+            value = str(value)
+
+        return value  # type: ignore[no-any-return]
+expected:
+- id: header-injection
+  category: security
+  severity: high
+  location:
+    path: src/werkzeug/datastructures/headers.py
+    match: '        value = str(value)'
+    span: 3
+  description: Not every WSGI server rejects newlines in header values. This check is what stops values
+    passed to Headers.add/set (redirect locations, cookies, download names) from splitting the response
+    and injecting headers.

@@ -1,0 +1,25 @@
+id: seeded-inventory-uncapped-limit
+kind: seeded
+split: dev
+fixture: inventory_service
+title: Simplify positive integer parsing
+description: |
+  Queries apply LIMIT anyway, so clamping the parsed value to a maximum is redundant.
+edits:
+- path: app/validators.py
+  find: |2-
+            raise HTTPError(400, "expected a positive integer")
+        return min(value, maximum)
+  replace: |2-
+            raise HTTPError(400, "expected a positive integer")
+        return value
+expected:
+- id: unbounded-limit
+  category: reliability
+  severity: medium
+  location:
+    path: app/validators.py
+    match: raise HTTPError(400, "expected a positive integer")
+    span: 2
+  description: 'The parsed number is the LIMIT: list_items passes it straight to LIMIT ?, so without the
+    clamp a client can request any number of rows, and the maximum argument is silently ignored.'
