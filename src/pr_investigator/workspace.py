@@ -49,6 +49,7 @@ def run_git(
     git_dir: Path | None = None,
     extra_env: Mapping[str, str] | None = None,
     timeout: float = 300,
+    stdin: bytes | None = None,
 ) -> bytes:
     """Run a hardened git command and return its stdout. Raises GitError on failure."""
     cmd = ["git"]
@@ -62,7 +63,9 @@ def run_git(
     if extra_env:
         env.update(extra_env)
     try:
-        proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, timeout=timeout)
+        proc = subprocess.run(
+            cmd, cwd=cwd, env=env, input=stdin, capture_output=True, timeout=timeout
+        )
     except FileNotFoundError as exc:
         raise GitError("git is not installed or not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
@@ -71,6 +74,15 @@ def run_git(
         stderr = proc.stderr.decode("utf-8", errors="replace").strip()
         raise GitError(f"git {' '.join(args[:2])} failed: {stderr}")
     return proc.stdout
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    """A regular file in a commit's tree."""
+
+    path: str
+    blob_sha: str
+    size: int
 
 
 @dataclass
@@ -124,6 +136,42 @@ class Workspace:
         if kind != "blob" or mode not in REGULAR_FILE_MODES:
             raise IsADirectoryError(f"{path} is not a regular file at {rev[:12]} (mode {mode})")
         return run_git(["cat-file", "blob", sha], git_dir=self.mirror)
+
+    def tree_files(self, rev: str) -> list[TreeEntry]:
+        """Every regular file in `rev`'s tree (symlinks and submodules left out), sorted by path."""
+        listing = run_git(["ls-tree", "-r", "-z", "--long", rev], git_dir=self.mirror)
+        entries: list[TreeEntry] = []
+        for record in listing.split(b"\0"):
+            if not record:
+                continue
+            meta, _, name = record.partition(b"\t")
+            mode, kind, sha, size = meta.decode().split()
+            if kind == "blob" and mode in REGULAR_FILE_MODES:
+                path = name.decode("utf-8", errors="surrogateescape")
+                entries.append(TreeEntry(path=path, blob_sha=sha, size=int(size)))
+        return sorted(entries, key=lambda e: e.path)
+
+    def read_blobs(self, shas: Sequence[str]) -> dict[str, bytes]:
+        """Read many blobs in one `git cat-file --batch` call."""
+        if not shas:
+            return {}
+        out = run_git(
+            ["cat-file", "--batch"],
+            git_dir=self.mirror,
+            stdin="".join(f"{s}\n" for s in shas).encode(),
+        )
+        blobs: dict[str, bytes] = {}
+        pos = 0
+        for sha in shas:
+            header_end = out.index(b"\n", pos)
+            header = out[pos:header_end].decode().split()
+            if len(header) != 3 or header[0] != sha or header[1] != "blob":
+                raise GitError(f"cat-file can't read blob {sha}: {' '.join(header)}")
+            size = header[2]
+            start = header_end + 1
+            blobs[sha] = out[start : start + int(size)]
+            pos = start + int(size) + 1  # content is followed by a newline
+        return blobs
 
     def blob_size(self, rev: str, path: str) -> int:
         out = run_git(["cat-file", "-s", f"{rev}:{path}"], git_dir=self.mirror)

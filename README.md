@@ -20,7 +20,7 @@ uv run pri eval validate  # check the evaluation cases (no LLM calls)
 uv run pri eval run       # score the baseline on the evaluation cases
 ```
 
-Reviewers: `a1` (the default) runs one bounded agent loop over the whole PR (up to 12 requests); `a2` runs a planner, then one bounded investigation per suspect (up to about 26 requests per PR); `b0` makes one call on the diff, the Phase 1 baseline. A1 is the default because it matched A2's recall with higher precision and fewer requests in the Phase 2 evaluation (D5 in the [decision register](docs/decisions.md)). `pri eval run` still scores `b0` unless you pass `--reviewer`.
+Reviewers: `a2` (the default) runs a planner, then one bounded investigation per suspect (up to about 26 requests per PR); `a1` runs one bounded agent loop over the whole PR (up to 12 requests); `b0` makes one call on the diff, the Phase 1 baseline. A2 is the default because it had the highest recall on the held-out test split of eval suite v2, at about 40% more requests per PR than A1 (D5 in the [decision register](docs/decisions.md)). `pri eval run` still scores `b0` unless you pass `--reviewer`. `--tools structural` gives `a1` and `a2` five more tools backed by a tree-sitter index of the repository's Python code (`find_symbol`, `find_references`, `get_symbol_context`, `find_tests`, `git_history`); the default, `--tools base`, keeps the Phase 1 tools until the Phase 3 ablations show whether the new ones help.
 
 It runs on Gemini's free tier. `.env.example` sets `PRI_LLM_MODEL=gemini-3.5-flash-lite`, the model the evaluation baseline uses (the code default is `gemini-3.8-flash`). Free-tier inputs may be used for training, so PR Investigator refuses to send a private repository's code to it.
 

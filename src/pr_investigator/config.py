@@ -60,3 +60,7 @@ class Settings(BaseSettings):
     @property
     def workspaces_dir(self) -> Path:
         return self.data_dir / "workspaces"
+
+    @property
+    def index_db(self) -> Path:
+        return self.data_dir / "index" / "structure.sqlite"

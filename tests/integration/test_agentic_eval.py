@@ -28,6 +28,7 @@ from pr_investigator.llm.factory import build_client
 from pr_investigator.llm.fake import ScriptedAdapter
 from pr_investigator.llm.types import Completion, LLMRequest, Message, Role, StopReason, ToolCall
 from pr_investigator.review.reviewers import Reviewer
+from pr_investigator.tools import Toolset
 from pr_investigator.trace import read_trace
 from tests.support import EVAL_CASES, EVAL_FIXTURES
 
@@ -257,8 +258,11 @@ async def test_a2_confirms_the_broken_caller_refutes_the_decoy_and_replays_from_
     assert len(list((tmp_path / "again" / "traces").iterdir())) == 3
 
 
-async def test_a1_confirms_the_broken_caller(fast: Settings, model: ReviewerModel) -> None:
-    _info, scores, summary = await run_eval(
+@pytest.mark.parametrize("toolset", [Toolset.BASE, Toolset.STRUCTURAL])
+async def test_a1_confirms_the_broken_caller(
+    fast: Settings, model: ReviewerModel, toolset: Toolset
+) -> None:
+    info, scores, summary = await run_eval(
         load_cases(EVAL_CASES, only=[BROKEN]),
         fixtures_dir=EVAL_FIXTURES,
         client=build_client(fast, provider=model),
@@ -266,7 +270,10 @@ async def test_a1_confirms_the_broken_caller(fast: Settings, model: ReviewerMode
         samples=1,
         max_diff_chars=fast.max_diff_chars,
         reviewer=Reviewer.A1,
+        toolset=toolset,
+        index_db=fast.index_db,
     )
+    assert info.toolset == toolset.value
     (score,) = scores
     assert score.error is None and score.true_positives == 1 and score.requests == 2
     assert score.agent is not None and score.agent.stop_causes == {"submitted": 1}

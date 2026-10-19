@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Status (2026-10-18):** Phases 1 and 2 are complete and merged. Phase 2's agentic reviewers find issues the baseline misses, with every finding backed by verified evidence; A1 is the default reviewer (D5). Phase 3 is approved and under way: eval suite v2 is built (30 cases, with a held-out test split); its live baselines need approval. No phase starts until it is approved.
+> **Status (2026-10-19):** Phases 1 and 2 are complete and merged. Phase 2's agentic reviewers find issues the baseline misses, with every finding backed by verified evidence; A2 is the default reviewer (D5, revised 2026-10-19 after the suite v2 test baselines). Phase 3 is approved and under way: eval suite v2 is built (34 cases, with a held-out test split) and its B0, A1 and A2 test baselines are committed; step 2 (the structural index) is next. No phase starts until it is approved.
 
 The order follows risk. The most uncertain question is whether agentic investigation produces precise, evidence-backed findings at acceptable cost, so it gets built and measured first. GitHub App plumbing and the UI are well-understood engineering and come later.
 
@@ -201,7 +201,7 @@ Choices made while building, beyond the decisions above (details in [architectur
 - **D10:** the structural index is a SQLite file under `.pri/`; Postgres, pgvector, Docker Compose and Alembic move to Phase 5.
 - **D8/D9:** semantic retrieval and embeddings are deferred, and built only if the ablations show misses that search and structure can't solve.
 - **D12:** a static analyzer is deferred; tree-sitter risk signals come first.
-- New tools go to A1 (the default reviewer) first. A2 gets them too, because the two share the loop.
+- New tools go to the default reviewer first: A1 when the plan was approved, A2 since D5 was revised (2026-10-19). Both get them, because the two share the loop.
 
 **Steps**
 
@@ -210,7 +210,7 @@ Choices made while building, beyond the decisions above (details in [architectur
 | 0 | Close out Phase 2: status lines, a demo from a committed trace | Done |
 | 1 | Eval suite v2: 20 new cases (multi-issue PRs, context reached through registries and rule strings, convention breaks, more decoys), the Werkzeug fixture, a dev/test split; then B0, A1 and A2 baselines on it | Done ([results](../evals/results/README.md#phase-3-a2-baseline-on-the-test-split)): test-split recall B0 46%, A1 23%, A2 62% (77% after adjudicating two mislocated correct findings) |
 | 1b | Claim checking: the test baselines showed A1 accepting misleading PR descriptions. Four dev cases with misleading or accurate claims were added, and a prompt telling the agent to verify the author's claims (`single_agent.v4`) was tried on dev only | Done: no gain on dev (recall 45% vs 64%), so it was not run on the test split; reviewers stay on v3 ([results](../evals/results/README.md#claim-checking-experiment-dev-split)) |
-| 2 | Structural index (tree-sitter, Python, keyed by blob SHA, SQLite) and tools: `find_symbol`, `find_references` (name-based, labelled), `get_symbol_context`, `find_tests`, `git_history`, all with exact observations | Planned |
+| 2 | Structural index (tree-sitter, Python, keyed by blob SHA, SQLite) and tools: `find_symbol`, `find_references` (name-based, labelled), `get_symbol_context`, `find_tests`, `git_history`, all with exact observations | Built, not yet measured: an opt-in toolset (`--tools structural`, prompts `single_agent.v5` and `investigator.v5`); `base` stays the default until step 5. Indexing a head after its base parses only the changed blobs. `git_history` records no observations (commit messages are claims), and the eval repositories have only two commits, so the suite can't measure it |
 | 3 | Deterministic context pack (callers, callees, tests, config of each changed function); B1 (one call with the diff and the pack); optional pack in A1's opening | Planned |
 | 4 | Deterministic leads: hidden Unicode, edits to agent instruction files, tree-sitter risk signals; each lead must be addressed or dismissed | Planned |
 | 5 | Ablations on the test split (A1 with and without the tools and the pack, B0 vs B1, A2 vs A1 on multi-issue cases); keep, narrow or drop each component | Planned |

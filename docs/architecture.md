@@ -128,6 +128,8 @@ flowchart TD
 
 Indexing is content-addressed by git blob SHA (details in §6.2). Parse results, chunks and embeddings for a given file version are computed once and reused across commits and PRs. Once the base branch is indexed, indexing a PR head only touches the blobs the PR changed. The first index of a repository is the only expensive one.
 
+**As built in Phase 3** (`index/`). Python files only (D7), parsed with tree-sitter and its official Python grammar. Per blob the index stores symbols, name references and imports in one SQLite file, `.pri/index/structure.sqlite` (D10), keyed by `(blob_sha, parser_version)`. A ref (head or merge base) is indexed the first time a structural tool asks about it, so a run that never uses those tools costs nothing. Blob contents come from git objects, never from the checkout. On the Werkzeug fixture (82 Python files) the first index takes about 0.4 s; indexing the base afterwards parses only the blobs the PR changed. Chunks and embeddings aren't built (D8/D9, step 6 only if the ablations show the need).
+
 ### 4.4 Change analysis and leads (deterministic)
 
 This stage produces a `ChangeSet`:
@@ -175,7 +177,7 @@ The planner receives the context pack, a review checklist per category, and the 
 - They are visible in the UI, including the refuted ones ("we checked X; it's fine because Y").
 - They allow per-stage evaluation: planner recall separately from investigator precision.
 
-The single-agent alternative is kept as ablation A1 ([evaluation.md](evaluation.md)). In the Phase 2 evaluation, A1 matched A2's recall with higher precision and fewer requests on cases with one issue each, so A1 is the default for `pri review` (D5). The planner stays, and has to show its value on harder cases with several issues per PR.
+The single-agent alternative is kept as ablation A1 ([evaluation.md](evaluation.md)). In the Phase 2 evaluation, A1 matched A2's recall with higher precision and fewer requests on cases with one issue each, so A1 was briefly the default. On the held-out test split of eval suite v2 (harder cases, several with two issues), A2 had the highest recall (62% raw, 77% adjudicated, against A1's 23%) at about 40% more requests per PR, so A2 is the default for `pri review` again (D5, 2026-10-19).
 
 **As built in Phase 2** (`agent/planner.py`, prompt `planner.v1`). The planner sees exactly what B0 sees: the untrusted-tagged PR metadata and the line-numbered diff. Each suspect has a title, category, location (path, side, lines), the suspected problem, what would confirm or refute it, and a priority from 1 (most likely serious) to 10. Leads, links between them and dismissed leads arrive with Phase 3. Code then:
 
@@ -326,16 +328,18 @@ Rules that apply to every tool:
 | `list_directory(path, max_entries)` | Bounded tree listing | Worktree | 1 |
 | `submit_verdict(...)` | Terminal tool for an investigation (A2): the verdict and its evidence (§4.7) | — | 2 |
 | `report_findings(...)` | Terminal tool for the single-agent reviewer (A1): a summary and up to 4 findings, each with evidence | — | 2 |
-| `find_symbol(name, kind?)` | Where is X defined? | Symbol index | 3 |
-| `find_references(symbol)` | Call sites and usages. Results say whether they're name-based or precise. | Reference index (LSP in S2) | 3 |
-| `get_symbol_context(path, line)` | Enclosing function or class, signature, decorators, direct callers and callees | Symbol index | 3 |
-| `find_tests(path or symbol)` | Tests that exercise a module or symbol | Imports, naming conventions, semantic search | 3 |
+| `find_symbol(name, kind, ref, max_results)` | Where is X defined? Shows decorators and signature. `Map.bind` or `bind` | Symbol index | 3 |
+| `find_references(name, path_glob, ref, max_results)` | Uses of an identifier, grouped by file and enclosing function. Labelled name-based. | Reference index (LSP in S2) | 3 |
+| `get_symbol_context(path, line, ref)` | Enclosing function and class signatures, calls to it elsewhere, and the functions it calls with their definitions | Symbol and reference index | 3 |
+| `find_tests(symbol or path, ref, max_results)` | Tests whose code mentions a symbol, or test files that import a module | Reference and import index, test-file naming conventions | 3 |
 | `semantic_search(query, scope, k)` | Find code by behaviour when names are unknown | Hybrid retrieval (§6.3) | 3 |
-| `git_history(path, lines)` | Recent commits touching a region, with messages | `git log -L` | 3 |
+| `git_history(path, start_line, end_line, max_commits)` | Recent commits touching a file or region: ids, dates, subjects, marked when in the PR. Records no observations, so it can't be cited | `git log -L` | 3 |
 | `structural_search(pattern, lang)` | AST pattern search (optional) | ast-grep | 3 (optional) |
 | `run_test(...)` | Run a generated test | Sandbox | S1 |
 
 About a dozen tools is small enough to keep in context, so no tool search is needed.
+
+The agent gets the Phase 1 tools (the `base` toolset) or those plus the five structural ones (`structural`), selected with `--tools` and recorded with every run. `structural` uses prompts `single_agent.v5` and `investigator.v5` (v3 plus a sentence naming the new tools). `base` stays the default until the Phase 3 ablations decide (invariant 8). The structural tools read the lines they display from the repository and record observations for exactly those lines, as `read_file` does; a query with no results records a search observation that can be cited as absence evidence.
 
 ## 6. Repository intelligence and retrieval
 
@@ -353,9 +357,9 @@ Recent studies found that agents with good grep tools match or beat embedding re
 
 ### 6.2 Indexing
 
-- **Parsing.** tree-sitter, through a prebuilt language pack: fast, error-tolerant (PR code may not compile), and one API for many languages.
+- **Parsing.** tree-sitter: fast, error-tolerant (PR code may not compile), and one API for many languages. Phase 3 supports Python only (D7), with the official grammar package.
   - Python gets deep support: imports, decorators, call sites and framework idioms.
-  - Other languages get generic definitions and references from tags queries, so the agent can still navigate them.
+  - Other languages could later get generic definitions and references from tags queries, through a language pack.
 - **Extracted per blob:**
   - symbols (kind, qualified name, line range, signature, docstring, decorators, parent)
   - imports
@@ -565,7 +569,7 @@ Every row belongs to one installation, directly or through its parent, and every
 | Orchestration | Thin custom orchestrator on the LLM interface (D4) | Works with any adapter; full control over budgets, the evidence ledger, tracing and replay, in a few hundred lines | Vendor tool runners, Claude Agent SDK, LangGraph, PydanticAI |
 | Web and UI | FastAPI, Jinja2, HTMX (D13) | Async and Pydantic-native; a server-rendered UI with no JavaScript build step | A React/Vite SPA |
 | GitHub client | httpx now; githubkit with GitHub App auth (D22) | One endpoint in Phase 1; typed, async App auth later | PyGithub |
-| Parsing | tree-sitter with a prebuilt language pack | Fast, error-tolerant, multi-language, queryable | Python `ast` (Python-only, fails on syntax errors), LSP/SCIP |
+| Parsing | tree-sitter with the official Python grammar (D7) | Fast, error-tolerant, multi-language, queryable | Python `ast` (Python-only, fails on syntax errors), LSP/SCIP |
 | Lexical search | ripgrep | Fast, respects ignore files, linear-time regex engine (agent-supplied patterns can't cause catastrophic backtracking), JSON output | `git grep` |
 | Static analysis | Semgrep CE or Opengrep (D12) | Runs locally without building the code; pattern and taint rules; JSON/SARIF output | CodeQL: deeper dataflow, but heavy and licence-restricted for non-open-source code |
 | Storage | A SQLite file for the Phase 3 index; Postgres with pgvector from Phase 5 (D10) | One store for relational data, vectors, full-text search and the queue | SQLite with sqlite-vec; a dedicated vector database |
@@ -577,7 +581,7 @@ Every row belongs to one installation, directly or through its parent, and every
 
 ## 13. Repository structure
 
-As of Phase 2. Modules are flat until they grow. Later phases add `indexing/`, `retrieval/`, `analyzers/`, `storage/`, `security/`, `web/` and `docker/`.
+As of Phase 3 step 2. Modules are flat until they grow. Later phases add `retrieval/`, `analyzers/`, `storage/`, `security/`, `web/` and `docker/`.
 
 ```text
 pr-investigator/
@@ -595,11 +599,12 @@ pr-investigator/
 │   ├── github.py             # PR references, PR metadata over REST
 │   ├── ingest.py             # ReviewTarget + Workspace from a GitHub PR or local refs
 │   ├── trace.py              # JSONL run traces and their rendering for `pri show`
-│   ├── tools/                # read-only tools, output budgets, path confinement
+│   ├── tools/                # read-only tools (base and structural), output budgets, path confinement
+│   ├── index/                # tree-sitter facts per blob, the SQLite structural index
 │   ├── agent/                # ledger, evidence check, loop, verdicts, planner, A2, A1
 │   ├── llm/                  # LLMClient, types, Gemini/fake adapters, cache, guards, factory
 │   ├── prompts/              # versioned prompts: baseline_review, judge, planner,
-│   │                         #   investigator, single_agent, agent_loop
+│   │                         #   investigator, single_agent, agent_loop (v5: structural tools)
 │   ├── review/               # B0, the shared reviewer entry point, run reports
 │   └── evaluation/           # cases, materialization, matching, metrics, runner
 ├── evals/

@@ -25,17 +25,19 @@ from pr_investigator.agent.models import (
 )
 from pr_investigator.diff import ParsedDiff
 from pr_investigator.domain import Anchor, Category, Confidence, Evidence, ReviewTarget, Severity
+from pr_investigator.index.store import RepoIndex
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.prompts import Prompt, load_prompt
 from pr_investigator.llm.types import Effort, ToolSpec
 from pr_investigator.review.baseline import Coverage, render_diff, untrusted
-from pr_investigator.tools import Observation
+from pr_investigator.tools import Observation, Toolset
 from pr_investigator.tools.get_diff import file_observations
 from pr_investigator.trace import Trace, errors_traced
 from pr_investigator.workspace import Workspace
 
 STAGE = "single_agent"
 PROMPT_NAME, PROMPT_VERSION = "single_agent", 3
+STRUCTURAL_PROMPT_VERSION = 5  # v3 plus the structural tools (v4 was the claim-checking trial)
 REVIEWER = "a1"
 
 
@@ -122,13 +124,14 @@ class ReportFindings:
         return Submission(value=CheckedReport(summary=report.summary, findings=checked))
 
 
-def single_agent_prompt() -> Prompt:
-    return load_prompt(PROMPT_NAME, PROMPT_VERSION)
+def single_agent_prompt(toolset: Toolset = Toolset.BASE) -> Prompt:
+    structural = toolset is Toolset.STRUCTURAL
+    return load_prompt(PROMPT_NAME, STRUCTURAL_PROMPT_VERSION if structural else PROMPT_VERSION)
 
 
-def a1_prompts() -> tuple[Prompt, ...]:
+def a1_prompts(toolset: Toolset = Toolset.BASE) -> tuple[Prompt, ...]:
     """Every prompt A1 uses, for run records."""
-    return (single_agent_prompt(), load_prompt(LOOP_PROMPT_NAME, LOOP_PROMPT_VERSION))
+    return (single_agent_prompt(toolset), load_prompt(LOOP_PROMPT_NAME, LOOP_PROMPT_VERSION))
 
 
 async def review_a1(
@@ -140,13 +143,17 @@ async def review_a1(
     budget: AgentBudget | None = None,
     sample: int = 0,
     trace: Trace | None = None,
+    toolset: Toolset = Toolset.BASE,
+    index: RepoIndex | None = None,
 ) -> AgentReview:
     budget = budget or AgentBudget()
     trace = trace or Trace()
-    prompts = a1_prompts()
-    emit_run_start(trace, REVIEWER, target, client.provider, client.model, budget, prompts)
+    prompts = a1_prompts(toolset)
+    emit_run_start(trace, REVIEWER, target, client.provider, client.model, budget, prompts, toolset)
     with errors_traced(trace):
-        review = await _review_a1(target, workspace, diff, client, budget, sample, trace, prompts)
+        review = await _review_a1(
+            target, workspace, diff, client, budget, sample, trace, prompts, toolset, index
+        )
     emit_run_end(trace, review)
     return review
 
@@ -160,6 +167,8 @@ async def _review_a1(
     sample: int,
     trace: Trace,
     prompts: tuple[Prompt, ...],
+    toolset: Toolset,
+    index: RepoIndex | None,
 ) -> AgentReview:
     started = time.monotonic()
     config = LoopConfig(
@@ -172,7 +181,16 @@ async def _review_a1(
         sample=sample,
     )
     terminal = ReportFindings(workspace, diff, max_findings=budget.max_findings)
-    loop = AgentLoop(client, workspace, diff, terminal, config, trace=trace.scoped("review"))
+    loop = AgentLoop(
+        client,
+        workspace,
+        diff,
+        terminal,
+        config,
+        tools=toolset.tools,
+        index=index,
+        trace=trace.scoped("review"),
+    )
     opening, coverage = single_agent_opening(loop, target, budget)
     review = AgentReview(
         reviewer=REVIEWER,
@@ -184,11 +202,12 @@ async def _review_a1(
         model=client.model,
         prompts={p.id: p.sha256 for p in prompts},
         budget=budget,
+        toolset=toolset,
     )
     if not coverage.reviewed:
         return review  # nothing to show, so spend no quota
 
-    result = await loop.run(single_agent_prompt().text, opening)
+    result = await loop.run(prompts[0].text, opening)
     record = LoopRecord.of(result)
     findings = Findings()
     summary = f"The review ended without an accepted report ({result.cause.value})."

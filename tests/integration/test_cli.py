@@ -31,7 +31,7 @@ def test_doctor_runs_without_calling_anything() -> None:
     assert "provider / model" in result.output
 
 
-def test_review_of_a_local_repo_uses_a1_by_default(
+def test_review_of_a_local_repo_uses_a2_by_default(
     local_pr: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("PRI_LLM_REQUESTS_PER_MINUTE", "1000")  # the offline provider is paced too
@@ -41,8 +41,26 @@ def test_review_of_a_local_repo_uses_a1_by_default(
     assert result.exit_code == 0, result.output
     assert "No findings" in result.output
     (run_dir,) = (tmp_path / "pri-data" / "runs").iterdir()
-    assert json.loads((run_dir / "run.json").read_text())["reviewer"] == "a1"
+    assert json.loads((run_dir / "run.json").read_text())["reviewer"] == "a2"
     assert (run_dir / "trace.jsonl").is_file()
+
+
+def test_review_with_structural_tools_records_the_toolset(
+    local_pr: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PRI_LLM_REQUESTS_PER_MINUTE", "1000")  # the offline provider is paced too
+    args = ["review", str(local_pr), "--base", "main", "--head", "pr", "--data-class", "test"]
+    result = runner.invoke(app, [*args, "--reviewer", "a1", "--tools", "structural"])
+    assert result.exit_code == 0, result.output
+    (run_dir,) = (tmp_path / "pri-data" / "runs").iterdir()
+    run = json.loads((run_dir / "run.json").read_text())
+    assert run["toolset"] == "structural" and "single_agent.v5" in run["prompts"]
+
+
+def test_structural_tools_are_refused_for_b0(local_pr: Path) -> None:
+    args = ["review", str(local_pr), "--base", "main", "--head", "pr", "--data-class", "test"]
+    result = runner.invoke(app, [*args, "--reviewer", "b0", "--tools", "structural"])
+    assert result.exit_code != 0 and "a1 and a2 only" in result.output
 
 
 def test_eval_run_keeps_b0_as_its_default() -> None:

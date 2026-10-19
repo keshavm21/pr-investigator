@@ -124,6 +124,8 @@ The judge runs on the configured free model. A judge from a different model fami
 
 Effort levels and, if D3 allows, cheaper models per stage are tested as further variants.
 
+Phase 3 adds a tool dimension to A1 and A2: `--tools base` (the Phase 1 tools) or `--tools structural` (plus the tree-sitter index tools). The run summary records which one was used.
+
 ### 2.5 Statistics
 
 - **Repetition.** Model outputs vary from run to run, so the baseline runs at least 3 times per case. On free quotas, agentic configurations may only afford 1–2 repetitions; reports state the count. Results are reported as means with bootstrap 95% confidence intervals over cases.

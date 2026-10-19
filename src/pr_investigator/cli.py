@@ -23,7 +23,8 @@ from pr_investigator.llm.client import LLMClient, ensure_data_allowed
 from pr_investigator.llm.factory import build_client
 from pr_investigator.llm.guards import RequestBudget
 from pr_investigator.review.report import create_run_dir, render_markdown, save_run
-from pr_investigator.review.reviewers import AnyReview, Reviewer, run_reviewer
+from pr_investigator.review.reviewers import AnyReview, Reviewer, check_toolset, run_reviewer
+from pr_investigator.tools import Toolset
 from pr_investigator.trace import TRACE_FILE, Trace, printable_lines, read_trace, render_trace
 from pr_investigator.workspace import Workspace, run_git
 
@@ -40,6 +41,14 @@ ProviderOpt = Annotated[
 ModelOpt = Annotated[str | None, typer.Option("--model", help="Model (overrides PRI_LLM_MODEL).")]
 CasesOpt = Annotated[Path, typer.Option("--cases-dir", help="Directory of case manifests.")]
 SplitOpt = Annotated[str, typer.Option("--split", help="Which cases: dev, test (held out) or all.")]
+ToolsOpt = Annotated[
+    Toolset,
+    typer.Option(
+        "--tools",
+        help="The agent's tools (a1 and a2): base, or structural (adds find_symbol, "
+        "find_references, get_symbol_context, find_tests and git_history).",
+    ),
+]
 FixturesOpt = Annotated[Path, typer.Option("--fixtures-dir", help="Directory of fixtures.")]
 
 
@@ -78,26 +87,28 @@ def review(
         Reviewer,
         typer.Option(
             "--reviewer",
-            help="a1 (default): one agent loop over the whole PR. a2: planner, then one "
-            "investigation per suspect. b0: one call on the diff (the Phase 1 baseline).",
+            help="a2 (default): planner, then one investigation per suspect. a1: one agent "
+            "loop over the whole PR. b0: one call on the diff (the Phase 1 baseline).",
         ),
-    ] = Reviewer.A1,
+    ] = Reviewer.A2,
+    tools: ToolsOpt = Toolset.BASE,
     max_requests: Annotated[
         int, typer.Option(min=1, help="Cap on real provider requests (cache hits are free).")
     ] = 30,
     as_json: Annotated[bool, typer.Option("--json", help="Print the result as JSON.")] = False,
 ) -> None:
-    """Review a pull request with the agentic reviewer A1 (default), A2, or the baseline B0."""
+    """Review a pull request with the agentic reviewer A2 (default), A1, or the baseline B0."""
     run_dir: Path | None = None
     try:
         settings = _settings(provider, model)
+        check_toolset(reviewer, tools)
         client = build_client(settings, budget=RequestBudget(max_requests))
         review_target, workspace = _ingest(
             target, base, head, title, description, data_class, client, settings
         )
         run_dir = create_run_dir(settings.runs_dir)
         result = asyncio.run(
-            _run_reviewer(reviewer, review_target, workspace, client, settings, run_dir)
+            _run_reviewer(reviewer, tools, review_target, workspace, client, settings, run_dir)
         )
         save_run(result, run_dir)
     except PRIError as exc:
@@ -115,6 +126,7 @@ def review(
 
 async def _run_reviewer(
     reviewer: Reviewer,
+    tools: Toolset,
     target: ReviewTarget,
     workspace: Workspace,
     client: LLMClient,
@@ -130,6 +142,8 @@ async def _run_reviewer(
             client,
             max_diff_chars=settings.max_diff_chars,
             trace=trace,
+            toolset=tools,
+            index_db=settings.index_db,
         )
 
 
@@ -274,16 +288,19 @@ def eval_run(
         bool, typer.Option(help="Write a trace per case to <results>/traces (a1 and a2 only).")
     ] = True,
     split: SplitOpt = "all",
+    tools: ToolsOpt = Toolset.BASE,
 ) -> None:
     """Run a reviewer over the evaluation cases and score it."""
     try:
         settings = _settings(provider, model)
+        check_toolset(reviewer, tools)
         cases = load_cases(cases_dir, only=case, split=split)
         budget = RequestBudget(max_requests)
         client = build_client(settings, budget=budget)
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         safe_model = client.model.replace("/", "_")
-        out_dir = output or Path("evals/results") / f"{stamp}-{reviewer.value}-{safe_model}"
+        suffix = "" if tools is Toolset.BASE else f"-{tools.value}"
+        out_dir = output or Path("evals/results") / f"{stamp}-{reviewer.value}{suffix}-{safe_model}"
         info, scores, summary = asyncio.run(
             run_eval(
                 cases,
@@ -296,6 +313,8 @@ def eval_run(
                 reviewer=reviewer,
                 traces_dir=out_dir / "traces" if traces else None,
                 split=split,
+                toolset=tools,
+                index_db=settings.index_db,
             )
         )
     except PRIError as exc:

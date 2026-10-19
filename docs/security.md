@@ -100,6 +100,8 @@ One path is specific to A2: the planner writes each suspect from untrusted PR co
 
   Config that could launch programs lives in `.git/config`, which a fetch doesn't transfer, and repository content is never used as git configuration.
 - **Parsers and analyzers run constrained.** tree-sitter, Semgrep/Opengrep and ripgrep treat files as data, but they are complex native code. They run as non-root, in a container with a read-only root filesystem, with CPU, memory and time limits, and with no extra capabilities.
+  - In the local CLI (Phase 3), tree-sitter runs in-process. Its Python binding has no parse timeout, so only Python files up to 1 MB are parsed, and the tree is walked iteratively, so deeply nested input can't exhaust the stack. The binding is pinned below 0.26: 0.26.0 corrupted the heap while walking the Werkzeug test files (found while building the index). Nothing parsed is imported or executed.
+  - The structural tools show names and lines taken from untrusted files, inside the same `<untrusted-...>` blocks as every tool result. `git_history` shows commit subjects, which are untrusted claims, and records no observations, so they can't become evidence.
 - **Execution-based verification (S1) only in an isolated sandbox:**
   - gVisor or a microVM
   - no network and no secrets

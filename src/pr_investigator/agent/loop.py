@@ -29,6 +29,7 @@ from pydantic import ValidationError
 from pr_investigator.agent.ledger import ObservationLedger, printable
 from pr_investigator.diff import ParsedDiff
 from pr_investigator.domain import DataClass
+from pr_investigator.index.store import RepoIndex
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.prompts import load_prompt
 from pr_investigator.llm.types import (
@@ -135,6 +136,7 @@ class AgentLoop[T]:
         config: LoopConfig,
         *,
         tools: tuple[Tool, ...] = READ_ONLY_TOOLS,
+        index: RepoIndex | None = None,
         trace: Trace | None = None,
     ) -> None:
         if terminal.spec.name in {t.name for t in tools}:
@@ -145,7 +147,10 @@ class AgentLoop[T]:
         self.tools = tools
         self.trace = trace or Trace()
         self.ctx = ToolContext(
-            workspace=workspace, diff=diff, max_output_chars=config.max_tool_output_chars
+            workspace=workspace,
+            diff=diff,
+            max_output_chars=config.max_tool_output_chars,
+            index=index,
         )
         self.ledger = ObservationLedger()
         self.messages: list[Message] = []

@@ -27,6 +27,8 @@ from pr_investigator.domain import (
     ReviewTarget,
     Side,
 )
+from pr_investigator.errors import ConfigError
+from pr_investigator.index.store import RepoIndex
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.fake import Script, ScriptedAdapter
 from pr_investigator.llm.types import (
@@ -39,6 +41,8 @@ from pr_investigator.llm.types import (
 )
 from pr_investigator.review.baseline import Coverage
 from pr_investigator.review.report import _evidence, render_markdown
+from pr_investigator.review.reviewers import Reviewer, run_reviewer
+from pr_investigator.tools import Toolset
 from pr_investigator.trace import Trace, read_trace, render_trace
 from pr_investigator.workspace import Workspace
 from tests.support import MakeRepo, OpenWorkspace
@@ -505,3 +509,83 @@ def test_the_v2_prompts_show_a_complete_evidence_example() -> None:
         assert prompt.version == 3
         assert '"role": "defect_site", "path": "app/users.py", "start_line": 31' in prompt.text
         assert "even for a single line" in prompt.text
+
+
+async def test_a1_with_structural_tools_cites_an_index_observation(
+    pr: Setup, tmp_path: Path
+) -> None:
+    target, workspace, diff = pr
+    # The opening records O1-O4; find_references records its search (O5), the import (O6) and
+    # the call in order_total (O7).
+    script: list[Script] = [
+        reply(ToolCall(id="refs", name="find_references", arguments={"name": "total"})),
+        reply(
+            tool(
+                "report_findings",
+                summary="Drops the tax parameter from total().",
+                findings=[
+                    claim(
+                        [
+                            cite("O1", "defect_site", "app/pricing.py", 1, 1),
+                            cite("O7", "context", "app/orders.py", 5, 5),
+                        ]
+                    )
+                ],
+            )
+        ),
+    ]
+    adapter = ScriptedAdapter(script)
+    index = RepoIndex(tmp_path / "index.sqlite", workspace)
+    review = await review_a1(
+        target, workspace, diff, LLMClient(adapter), toolset=Toolset.STRUCTURAL, index=index
+    )
+    index.close()
+
+    assert review.toolset is Toolset.STRUCTURAL
+    assert "single_agent.v5" in review.prompts
+    names = [t.name for t in adapter.requests[0].tools]
+    assert names[:4] == ["get_diff", "read_file", "search_code", "list_directory"]
+    assert {"find_symbol", "find_references", "get_symbol_context", "find_tests"} <= set(names)
+    assert "find_symbol" in adapter.requests[0].system  # the v5 prompt
+    (finding,) = review.findings
+    context = [e for e in finding.evidence if e.role is EvidenceRole.CONTEXT]
+    assert [(e.path, e.start_line) for e in context] == [("app/orders.py", 5)]
+
+
+async def test_the_base_toolset_keeps_the_v3_prompts_and_phase_1_tools(pr: Setup) -> None:
+    target, workspace, diff = pr
+    adapter = ScriptedAdapter([reply(tool("report_findings", summary="s", findings=[]))])
+    review = await review_a1(target, workspace, diff, LLMClient(adapter))
+    assert review.toolset is Toolset.BASE and "single_agent.v3" in review.prompts
+    assert [t.name for t in adapter.requests[0].tools] == [
+        "get_diff",
+        "read_file",
+        "search_code",
+        "list_directory",
+        "report_findings",
+    ]
+
+
+async def test_run_reviewer_checks_the_toolset(pr: Setup) -> None:
+    target, workspace, diff = pr
+    client = LLMClient(ScriptedAdapter([]))
+    with pytest.raises(ConfigError, match="a1 and a2 only"):
+        await run_reviewer(
+            Reviewer.B0,
+            target,
+            workspace,
+            diff,
+            client,
+            max_diff_chars=1000,
+            toolset=Toolset.STRUCTURAL,
+        )
+    with pytest.raises(ConfigError, match="needs an index file"):
+        await run_reviewer(
+            Reviewer.A1,
+            target,
+            workspace,
+            diff,
+            client,
+            max_diff_chars=1000,
+            toolset=Toolset.STRUCTURAL,
+        )

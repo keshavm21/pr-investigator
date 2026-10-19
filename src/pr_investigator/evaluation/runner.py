@@ -33,7 +33,14 @@ from pr_investigator.evaluation.materialize import (
 from pr_investigator.evaluation.metrics import AgentStats, CaseScore, Summary, summarize
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.types import LLMQuotaExhaustedError, RequestBudgetExceededError
-from pr_investigator.review.reviewers import AnyReview, Reviewer, reviewer_prompts, run_reviewer
+from pr_investigator.review.reviewers import (
+    AnyReview,
+    Reviewer,
+    check_toolset,
+    reviewer_prompts,
+    run_reviewer,
+)
+from pr_investigator.tools import Toolset
 from pr_investigator.trace import Trace
 from pr_investigator.workspace import Workspace, run_git
 
@@ -57,6 +64,7 @@ class EvalRunInfo(BaseModel):
     code_dirty: bool | None = None  # uncommitted changes when the run started
     provider_requests: int | None = None  # real provider calls, retries and judge included
     split: str = "all"  # which cases: dev, test or all
+    toolset: str = "base"  # the agent's tools (a1 and a2)
 
 
 def has_code_changes(porcelain: str) -> bool:
@@ -131,10 +139,13 @@ async def run_eval(
     budget: AgentBudget | None = None,
     traces_dir: Path | None = None,
     split: str = "all",
+    toolset: Toolset = Toolset.BASE,
+    index_db: Path | None = None,
 ) -> tuple[EvalRunInfo, list[CaseScore], Summary]:
     say = progress or (lambda _message: None)
+    check_toolset(reviewer, toolset)
     budget = (budget or AgentBudget()) if reviewer.agentic else None
-    prompts = reviewer_prompts(reviewer)
+    prompts = reviewer_prompts(reviewer, toolset)
     commit, dirty = code_version()
     info = EvalRunInfo(
         reviewer=reviewer.value,
@@ -151,6 +162,7 @@ async def run_eval(
         code_commit=commit,
         code_dirty=dirty,
         split=split,
+        toolset=toolset.value,
     )
     if traces_dir is not None and reviewer.agentic:
         traces_dir.mkdir(parents=True, exist_ok=True)
@@ -189,6 +201,8 @@ async def run_eval(
                             budget=budget,
                             sample=sample,
                             trace=trace,
+                            toolset=toolset,
+                            index_db=index_db,
                         )
                     requests, cached_requests = request_counts(result)
                     matches, judge_usage = await match(
@@ -268,6 +282,8 @@ def render_summary(info: EvalRunInfo, scores: list[CaseScore], summary: Summary)
         f"- Cases: {len(info.cases)} (split: {info.split}); samples per case: {info.samples}; "
         f"location tolerance: ±{info.tolerance} lines",
     ]
+    if info.reviewer != "b0":
+        lines.append(f"- Tools: {info.toolset}")
     if info.code_commit:
         dirty = " with uncommitted changes" if info.code_dirty else ""
         lines.append(f"- Code: commit `{info.code_commit[:12]}`{dirty}")

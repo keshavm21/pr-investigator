@@ -15,6 +15,7 @@ from typing import ClassVar, Literal, Protocol
 from pydantic import BaseModel, Field
 
 from pr_investigator.diff import ParsedDiff
+from pr_investigator.index.store import RepoIndex
 from pr_investigator.workspace import Workspace
 
 Ref = Literal["head", "base"]
@@ -54,6 +55,7 @@ class ToolContext:
     workspace: Workspace
     diff: ParsedDiff
     max_output_chars: int = MAX_OUTPUT_CHARS  # the agent uses a much smaller budget
+    index: RepoIndex | None = None  # the structural tools need it; the others ignore it
 
 
 class OutputBudget:
