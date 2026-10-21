@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Status (2026-10-21):** Phases 1 to 4 are complete. Phase 3 is complete: the structural index and tools, the context pack (B1) and the leads are built, and the ablations on the held-out test split are committed with a decision for each component. A2 is the default reviewer (D5). Phase 4 is complete too: the skeptic verifier (A3, opt-in: it removed no false positive on this model), ranking and the noise budget (applied to A1 and A2), and sanitized comment rendering with secret scanning. Phase 5 (review UI and GitHub publishing) is next and needs your approval to start.
+> **Status (2026-10-21):** Phases 1 to 4 are complete. Phase 3 is complete: the structural index and tools, the context pack (B1) and the leads are built, and the ablations on the held-out test split are committed with a decision for each component. A2 is the default reviewer (D5). Phase 4 is complete too: the skeptic verifier (A3, opt-in: it removed no false positive on this model), ranking and the noise budget (applied to A1 and A2), and sanitized comment rendering with secret scanning. Phase 5 is built (review UI, publisher, decisions, `pri publish`); its exit criterion needs a real test PR and your token, which is still to do. Phase 6 needs your approval to start.
 
 The order follows risk. The most uncertain question is whether agentic investigation produces precise, evidence-backed findings at acceptable cost, so it gets built and measured first. GitHub App plumbing and the UI are well-understood engineering and come later.
 
@@ -298,6 +298,8 @@ Results are reported on the test split (`pri eval run --split test`). Dev cases 
 **Also in this phase (moved from Phase 3, D10):** Docker Compose with Postgres (pgvector image) and Alembic migrations. Runs, findings and traces move from JSON files into the database, which the review UI needs.
 
 **Exit criteria:** approving findings in the UI produces a review on a test PR with correct line anchors, and rejections are recorded with reasons.
+
+**Status (2026-10-21).** Built and tested offline: the UI (runs list, finding cards with badges, evidence viewer with permalinks, trace viewer, refuted and not-posted findings, approve/edit/reject with reason codes, publish preview with the exact payload), the publisher (one `COMMENT` review on the analyzed commit, multi-line anchors, idempotency marker, 422 fallback, stale-head check), stored decisions, `pri publish`, `pri serve`, and single-user token login. **Not yet done:** the real test PR. To close the criterion: set `GITHUB_TOKEN` (pull request write access), run `pri review` on a PR you own, `pri serve`, approve one or two findings, check the preview, confirm, and look at the review on GitHub. **Left out:** suggestion blocks (the model's fix is text, not code); Postgres, Compose and Alembic (D10, moved to Phase 6); HTMX (D13).
 
 **Main risks:** anchoring mismatches against GitHub's diff (covered by property tests and a real test PR).
 

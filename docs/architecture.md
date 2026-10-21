@@ -299,6 +299,8 @@ The eval measures how many true positives the verifier removes, not only how man
 
 Decisions are stored and become labelled data for evaluation and, later, for feedback memory (S4).
 
+**As built in Phase 5** (`web/`, `review/decisions.py`, `publish.py`). A FastAPI app with server-rendered Jinja2 pages (`pri serve`, localhost only, one sign-in token). Pages: runs list; run page with finding cards (severity, category, confidence, skeptic badge, noise-budget badge, evidence with permalinks to the analyzed commit, decision form); trace viewer; refuted and not-posted findings; publish preview. A reviewer can approve (with edits to title, explanation, severity and fix; the anchor and evidence can't be edited), reject with a reason code, or clear a decision. Decisions go to `.pri/review.sqlite` with their history. There is no JavaScript: forms are plain POSTs under a Content Security Policy of `default-src 'none'`, so HTMX (D13's recommendation) was left out. Runs stay JSON files; Postgres moved to Phase 6 (D10).
+
 If the PR has new commits since the analysis, the UI says so and offers a re-run. Publishing still targets the analyzed commit.
 
 ### 4.12 Publishing
@@ -314,6 +316,7 @@ If the PR has new commits since the analysis, the UI says so and offers a re-run
 - **Rejected lines.** If GitHub rejects a line with a 422, that finding moves into the summary body. The rest of the publish still succeeds.
 - **Comment identity** (D15). Comments are posted by the GitHub App with "approved by @reviewer" in the footer (recommended), or by the reviewer through a user-to-server token.
 
+**As built in Phase 5** (`publish.py`, `pri publish`, the publish page). Local token mode: the review is posted as the owner of `GITHUB_TOKEN`, and each comment says "Approved by `@login`". The flow: build the payload from approved findings (edits applied, rendered through the template and sanitizer, anchors from the findings) → check the PR's head against the analyzed commit (a moved head is refused unless allowed) → look for the idempotency marker `<!-- pri-publication:KEY -->` in the PR's existing reviews → one `POST .../reviews` with `event: COMMENT` and `commit_id` the analyzed head. On a 422 the same review is sent again with every comment moved into the body (GitHub's error doesn't say which comment failed, and posting comments one by one would create several reviews, so the fallback is for the whole review, not per finding). Posting needs `--post` on the CLI or the confirm button in the UI; both default to a preview of the exact payload. The reviewer's decision for each finding, and each publication (review id, commit, counts), are stored. Suggestion blocks are not generated (Phase 4).
 ## 5. Agent tools
 
 Rules that apply to every tool:
@@ -518,7 +521,7 @@ Phase 2's prompts are `planner.v1`, `investigator.v3`, `single_agent.v3` and `ag
 
 ## 9. Data model
 
-From Phase 5, everything lives in Postgres (D10, revised 2026-10-18). Phase 3 adds a structural index as a SQLite file under `.pri/`, keyed by blob SHA. Until Phase 5, each run is files under `.pri/runs/<run id>/`: `run.json` (the full result: findings with their evidence and, for agentic reviewers, suspects, investigations, outcomes, budgets and request counts), `review.md`, and for A1 and A2 `trace.jsonl`. Domain objects are typed models in code. JSONB holds stage outputs and verdicts, whose shape evolves quickly.
+*Revised 2026-10-21:* Phase 5 kept runs as JSON files and stores review decisions and publications in a SQLite file (`.pri/review.sqlite`); Postgres moves to Phase 6 with the multi-user service (D10). The design below is the Phase 6 target. From the service on, everything lives in Postgres (D10, revised 2026-10-18). Phase 3 adds a structural index as a SQLite file under `.pri/`, keyed by blob SHA. Until Phase 5, each run is files under `.pri/runs/<run id>/`: `run.json` (the full result: findings with their evidence and, for agentic reviewers, suspects, investigations, outcomes, budgets and request counts), `review.md`, and for A1 and A2 `trace.jsonl`. Domain objects are typed models in code. JSONB holds stage outputs and verdicts, whose shape evolves quickly.
 
 | Table | Key contents | Notes |
 |---|---|---|
@@ -612,7 +615,9 @@ pr-investigator/
 │   ├── prompts/              # versioned prompts: baseline_review, judge, planner,
 │   │                         #   investigator, single_agent, agent_loop, skeptic (v5: structural tools)
 │   ├── review/               # B0/B1, context pack and leads, aggregation, comment rendering,
-│   │                         #   the shared reviewer entry point, run reports
+│   │                         #   review decisions, the shared reviewer entry point, run reports
+│   ├── publish.py            # approved findings -> one GitHub review (the only code that posts)
+│   ├── web/                  # the review UI: FastAPI app, Jinja2 templates, CSS
 │   └── evaluation/           # cases, materialization, matching, metrics, runner
 ├── evals/
 │   ├── fixtures/             # base projects the cases change (inventory_service, werkzeug)

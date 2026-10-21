@@ -11,7 +11,7 @@ import httpx
 from pydantic import BaseModel
 
 from pr_investigator.domain import PullRequestRef
-from pr_investigator.errors import GitHubError
+from pr_investigator.errors import GitHubError, GitHubValidationError
 
 _NAME = r"[A-Za-z0-9_.-]+"
 _PR_URL = re.compile(
@@ -96,6 +96,59 @@ class GitHubClient:
             raise GitHubError(f"unexpected pull request payload: missing {exc}") from exc
         _check_clone_url(info.clone_url)
         return info
+
+    def get_login(self) -> str:
+        """The login of the token's owner (the reviewer when publishing with a personal token)."""
+        login = self._get_json("/user").get("login")
+        if not isinstance(login, str):
+            raise GitHubError("unexpected /user payload: no login")
+        return login
+
+    def list_reviews(self, ref: PullRequestRef) -> list[dict[str, Any]]:
+        """Existing reviews on a pull request (up to 500), for the idempotency check."""
+        reviews: list[dict[str, Any]] = []
+        for page in range(1, 6):
+            path = (
+                f"/repos/{ref.owner}/{ref.repo}/pulls/{ref.number}/reviews?per_page=100&page={page}"
+            )
+            batch = self._get_list(path)
+            reviews += [r for r in batch if isinstance(r, dict)]
+            if len(batch) < 100:
+                break
+        return reviews
+
+    def create_review(self, ref: PullRequestRef, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST one review. A 422 raises GitHubValidationError, so the caller can retry."""
+        path = f"/repos/{ref.owner}/{ref.repo}/pulls/{ref.number}/reviews"
+        try:
+            response = self._http.post(path, json=payload)
+        except httpx.HTTPError as exc:
+            raise GitHubError(f"GitHub request failed: {exc}") from exc
+        if response.status_code == 422:
+            raise GitHubValidationError(f"GitHub rejected the review (422): {response.text[:300]}")
+        if response.status_code in (401, 403, 404):
+            raise GitHubError(
+                f"GitHub refused the review ({response.status_code}): the token needs write "
+                "access to pull requests on this repository"
+            )
+        if response.status_code not in (200, 201):
+            raise GitHubError(f"GitHub returned {response.status_code} creating the review")
+        data = response.json()
+        if not isinstance(data, dict):
+            raise GitHubError("unexpected response shape creating the review")
+        return data
+
+    def _get_list(self, path: str) -> list[Any]:
+        try:
+            response = self._http.get(path)
+        except httpx.HTTPError as exc:
+            raise GitHubError(f"GitHub request failed: {exc}") from exc
+        if response.status_code != 200:
+            raise GitHubError(f"GitHub returned {response.status_code} for {path}")
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise GitHubError(f"unexpected response shape from {path}")
+        return payload
 
     def _get_json(self, path: str) -> dict[str, Any]:
         try:

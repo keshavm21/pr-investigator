@@ -145,6 +145,7 @@ Everything the LLM writes is untrusted output.
 - **Webhooks.** HMAC signature verification happens before parsing. Deliveries are deduped by ID. Events for unknown or disabled installations are ignored, and the endpoint is rate-limited.
 - **UI login and access.** Reviewers sign in with GitHub, and the UI checks write permission on each repository.
 - **Session protection.** Cookies are signed, `HttpOnly`, `Secure` and `SameSite`. State-changing requests carry CSRF tokens, and a strict Content Security Policy applies.
+- *As built (Phase 5, local mode):* `pri serve` binds to 127.0.0.1 only and asks for one random token (constant-time compare). The session cookie is random, `HttpOnly` and `SameSite=Strict` (not `Secure`: it is served over plain http on localhost; don't expose the port). Every POST needs a CSRF token derived from the session. The CSP is `default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'` with `nosniff`, `no-referrer` and `no-store`. There is no JavaScript, and Jinja2 autoescaping covers all repository text and model output (tested with script tags in titles, explanations and evidence snippets). Run and finding ids are validated against fixed patterns before any file is opened. The GitHub token stays in the server's environment and is never rendered. Posting needs a confirm click; the UI is not safe to expose beyond localhost.
 
 ### 5.7 Resource exhaustion, cost abuse and coverage manipulation
 

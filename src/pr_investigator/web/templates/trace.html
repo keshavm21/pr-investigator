@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Trace {{ run_id }}{% endblock %}
+{% block body %}
+<p><a href="/runs/{{ run_id }}">← Run</a></p>
+<h1>Trace</h1>
+{% if text %}<pre>{{ text }}</pre>{% else %}<p class="muted">This run has no trace (B0 makes one call and records none).</p>{% endif %}
+{% endblock %}

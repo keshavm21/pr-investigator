@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Publish {{ run_id }}{% endblock %}
+{% block body %}
+<p><a href="/runs/{{ run_id }}">← Run</a></p>
+<h1>Publish preview</h1>
+{% if error %}<p class="bad">{{ error }}</p>{% endif %}
+{% if stale %}<p class="warn">{{ stale }}</p>{% endif %}
+{% if built %}
+<p>One review, <code>event: COMMENT</code>, on commit <code>{{ built.payload.commit_id[:12] }}</code>:
+  {{ built.inline|length }} line comments, {{ built.summary_only|length }} in the summary. This is the exact payload that will be sent.</p>
+<pre>{{ payload_json }}</pre>
+{% if can_post %}
+<form method="post" action="/runs/{{ run_id }}/publish">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if stale %}<label><input type="checkbox" name="allow_stale" value="1" style="width:auto"> Publish against the analyzed commit anyway</label>{% endif %}
+  <p><button>Post this review to GitHub</button></p>
+</form>
+{% else %}
+<p class="muted">{{ why_not }}</p>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -21,6 +21,14 @@ class GitHubError(PRIError):
     """A GitHub API request failed or returned something unexpected."""
 
 
+class GitHubValidationError(GitHubError):
+    """GitHub answered 422: it rejected the request's content (for example, a comment line)."""
+
+
+class PublishError(PRIError):
+    """A review can't be published: nothing approved, a stale head, no pull request, ..."""
+
+
 class DataPolicyError(PRIError):
     """The configured LLM provider may not receive this repository's content."""
 

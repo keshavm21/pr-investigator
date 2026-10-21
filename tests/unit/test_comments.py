@@ -287,3 +287,25 @@ def test_an_injected_summary_is_sanitized_too() -> None:
     r = r.model_copy(update={"summary": ATTACK})
     rendered = render_review(r, None)
     assert "evil.example" not in rendered.summary and CANARY not in rendered.summary
+
+
+from hypothesis import given  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+
+@given(
+    side=st.sampled_from([Side.LEFT, Side.RIGHT]),
+    start=st.integers(1, 40),
+    length=st.integers(0, 40),
+)
+def test_a_resolved_anchor_is_always_commentable_and_inside_the_requested_range(
+    side: Side, start: int, length: int
+) -> None:
+    """GitHub rejects lines outside the diff and ranges that cross hunks: never produce one."""
+    anchor = Anchor(path="app/a.py", side=side, start_line=start, end_line=start + length)
+    resolved = resolve_anchor(finding(anchor=anchor), DIFF)
+    if resolved is None:
+        return
+    file = DIFF.file("app/a.py")
+    assert file is not None and file.is_commentable(side, resolved.start_line, resolved.end_line)
+    assert start <= resolved.start_line <= resolved.end_line <= start + length

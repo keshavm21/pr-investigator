@@ -14,6 +14,7 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 from pr_investigator.agent.models import AgentReview
 from pr_investigator.diff import ParsedDiff
@@ -119,22 +120,35 @@ def resolve_anchor(finding: Finding, diff: ParsedDiff | None) -> Anchor | None:
     return None
 
 
-def location(item: Evidence, target: ReviewTarget) -> str:
+def evidence_label(item: Evidence) -> str:
     assert item.path is not None and item.start_line is not None and item.end_line is not None
     lines = (
-        f"{item.start_line}-{item.end_line}"
-        if item.end_line != item.start_line
-        else str(item.start_line)
+        str(item.start_line)
+        if item.end_line == item.start_line
+        else f"{item.start_line}-{item.end_line}"
     )
-    label = f"{item.path}:{lines}"
+    return f"{item.path}:{lines}"
+
+
+def evidence_url(item: Evidence, target: ReviewTarget) -> str | None:
+    """A permalink to the evidence at the analyzed commit, or None without a pull request."""
     prefix = permalink_prefix(target)
     if prefix is None:
-        return f"`{label}` at `{target.head_sha[:12]}`"
+        return None
+    assert item.path is not None and item.start_line is not None and item.end_line is not None
     sha = target.merge_base_sha if item.ref == "base" else target.head_sha
-    anchor = f"#L{item.start_line}" + (
-        f"-L{item.end_line}" if item.end_line != item.start_line else ""
-    )
-    return f"[`{label}`]({prefix}{sha}/{item.path}{anchor})"
+    fragment = f"#L{item.start_line}"
+    if item.end_line != item.start_line:
+        fragment += f"-L{item.end_line}"
+    return f"{prefix}{sha}/{quote(item.path)}{fragment}"
+
+
+def location(item: Evidence, target: ReviewTarget) -> str:
+    label = evidence_label(item)
+    url = evidence_url(item, target)
+    if url is None:
+        return f"`{label}` at `{target.head_sha[:12]}`"
+    return f"[`{label}`]({url})"
 
 
 @dataclass

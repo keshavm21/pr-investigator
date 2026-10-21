@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}{{ run_id }}{% endblock %}
+{% block body %}
+<p><a href="/">← Runs</a></p>
+<h1>{{ review.target.title }}</h1>
+<p class="muted">
+  {{ review.target.source }} · head <code>{{ review.target.head_sha[:12] }}</code> ·
+  reviewer {{ review.reviewer }} · {{ review.model }}
+  {% if usage %}· {{ usage }}{% endif %}
+</p>
+{% if stale %}<p class="warn">{{ stale }}</p>{% endif %}
+<p>{{ review.summary }}</p>
+<p>
+  <a href="/runs/{{ run_id }}/trace">Trace</a> ·
+  <a href="/runs/{{ run_id }}/publish">Publish preview ({{ approved }} approved)</a>
+</p>
+{% for p in publications %}
+<p class="ok">Published {{ p.published_at }}{% if p.html_url %}: <a href="{{ p.html_url }}">review</a>{% endif %}
+ ({{ p.comments }} comments, {{ p.summary_only }} in the summary)</p>
+{% endfor %}
+
+<h2>Findings ({{ cards|length }})</h2>
+{% if not cards %}<p class="muted">No findings.</p>{% endif %}
+{% for c in cards %}
+{% set f = c.finding %}
+<section class="card" id="{{ f.id }}">
+  <h3>
+    <span class="sev-{{ f.severity.value }}">{{ f.severity.value }}</span>
+    {{ f.title }}
+  </h3>
+  <p>
+    <span class="badge">{{ f.id }}</span>
+    <span class="badge">{{ f.category.value }}</span>
+    <span class="badge">confidence {{ f.confidence.value }}</span>
+    {% if f.verification %}<span class="badge">skeptic: {{ f.verification }}</span>{% endif %}
+    {% if c.posted %}<span class="badge ok">inside the noise budget</span>{% else %}<span class="badge">not in the noise budget</span>{% endif %}
+    {% if c.decision %}<span class="badge {{ 'ok' if c.decision.decision.value == 'approved' else 'bad' }}">{{ c.decision.decision.value }}{% if c.decision.reason_code %}: {{ c.decision.reason_code.value }}{% endif %}</span>{% endif %}
+  </p>
+  <p class="muted">
+    {{ f.anchor.path }}:{{ f.anchor.start_line }}{% if f.anchor.end_line != f.anchor.start_line %}-{{ f.anchor.end_line }}{% endif %}
+    ({{ f.anchor.side.value }}){% if not f.anchor_in_diff %} · outside the diff{% endif %}
+  </p>
+  <p>{{ f.explanation }}</p>
+  {% if f.suggested_fix %}<p><strong>Suggested fix:</strong> {{ f.suggested_fix }}</p>{% endif %}
+  {% if c.skeptic %}<p class="muted">Skeptic: {{ c.skeptic.explanation }}</p>{% endif %}
+  <details>
+    <summary>Evidence ({{ f.evidence|length }})</summary>
+    {% for e in c.evidence %}
+      <p>
+        {{ e.role }} ·
+        {% if e.link %}<a href="{{ e.link }}" rel="noreferrer">{{ e.label }}</a>{% else %}{{ e.label }}{% endif %}
+        <span class="muted">— {{ e.note }}</span>
+      </p>
+      {% if e.snippet %}<pre>{{ e.snippet }}</pre>{% endif %}
+    {% endfor %}
+  </details>
+  <details>
+    <summary>Decide</summary>
+    <form method="post" action="/runs/{{ run_id }}/findings/{{ f.id }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Title</label><input type="text" name="title" value="{{ f.title }}" maxlength="200">
+      <label>Explanation</label><textarea name="explanation" rows="4" maxlength="4000">{{ f.explanation }}</textarea>
+      <label>Severity</label>
+      <select name="severity">{% for s in severities %}<option value="{{ s }}" {% if s == f.severity.value %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+      <label>Suggested fix</label><textarea name="suggested_fix" rows="2" maxlength="4000">{{ f.suggested_fix or '' }}</textarea>
+      <label>If rejecting: reason</label>
+      <select name="reason_code">{% for r in reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select>
+      <input type="text" name="reason_text" placeholder="optional note" maxlength="4000">
+      <p><button name="action" value="approve">Approve</button><button name="action" value="reject">Reject</button><button name="action" value="clear">Clear</button></p>
+    </form>
+  </details>
+</section>
+{% endfor %}
+
+{% if refuted %}
+<h2>Refuted by the skeptic</h2>
+{% for f in refuted %}<p>{{ f.title }} <span class="muted">({{ f.anchor.path }}:{{ f.anchor.start_line }})</span></p>{% endfor %}
+{% endif %}
+{% if review.coverage.skipped %}
+<h2>Not reviewed</h2>
+<ul>{% for path, reason in review.coverage.skipped.items() %}<li>{{ path }}: {{ reason }}</li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}

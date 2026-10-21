@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Runs{% endblock %}
+{% block body %}
+<h1>Runs</h1>
+{% if not runs %}<p class="muted">No runs yet. Run <code>pri review</code> first.</p>{% endif %}
+<table>
+<tr><th>Run</th><th>Pull request</th><th>Reviewer</th><th>Findings</th><th>Decided</th></tr>
+{% for r in runs %}
+<tr>
+  <td><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
+  <td>{{ r.title }}</td>
+  <td>{{ r.reviewer }}</td>
+  <td>{{ r.findings }}</td>
+  <td>{{ r.decided }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endblock %}

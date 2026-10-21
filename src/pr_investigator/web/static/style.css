@@ -1,0 +1,21 @@
+:root { --bg:#fff; --fg:#1b1f24; --muted:#59636e; --line:#d0d7de; --card:#f6f8fa; --accent:#0969da;
+  --crit:#a40e26; --high:#cf222e; --med:#9a6700; --low:#57606a; --ok:#1a7f37; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --muted:#8d96a0;
+  --line:#30363d; --card:#161b22; --accent:#58a6ff; --crit:#ff7b72; --high:#ff7b72; --med:#d29922;
+  --low:#8d96a0; --ok:#3fb950; } }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,sans-serif; }
+main { max-width:60rem; margin:0 auto; padding:1rem; }
+header.top { border-bottom:1px solid var(--line); padding:.6rem 1rem; display:flex; gap:1rem; align-items:center; }
+header.top form { margin-left:auto; }
+a { color:var(--accent); }
+.muted { color:var(--muted); }
+.card { border:1px solid var(--line); background:var(--card); border-radius:6px; padding:.8rem 1rem; margin:1rem 0; }
+.badge { display:inline-block; border:1px solid var(--line); border-radius:1rem; padding:0 .55rem; font-size:.8rem; margin-right:.3rem; }
+.sev-critical,.sev-high { color:var(--high); } .sev-medium { color:var(--med); } .sev-low { color:var(--low); }
+.ok { color:var(--ok); } .bad { color:var(--high); }
+pre { overflow-x:auto; background:var(--bg); border:1px solid var(--line); padding:.5rem; border-radius:4px; font-size:.85rem; white-space:pre-wrap; word-break:break-word; }
+textarea,input[type=text],select { width:100%; box-sizing:border-box; font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.3rem; }
+label { display:block; margin:.5rem 0 .1rem; font-size:.85rem; color:var(--muted); }
+button { font:inherit; padding:.3rem .8rem; border:1px solid var(--line); border-radius:4px; background:var(--card); color:var(--fg); cursor:pointer; margin-right:.4rem; }
+table { border-collapse:collapse; width:100%; } td,th { text-align:left; padding:.3rem .5rem; border-bottom:1px solid var(--line); }
+.warn { border-left:4px solid var(--med); padding:.4rem .8rem; background:var(--card); }

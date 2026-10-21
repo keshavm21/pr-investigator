@@ -1,6 +1,7 @@
 """`pri` command-line interface."""
 
 import asyncio
+import json
 import platform
 import shutil
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from fastapi import HTTPException
 from rich.console import Console
 from rich.markdown import Markdown
 
@@ -22,6 +24,7 @@ from pr_investigator.github import GitHubClient, parse_pr_reference
 from pr_investigator.llm.client import LLMClient, ensure_data_allowed
 from pr_investigator.llm.factory import build_client
 from pr_investigator.llm.guards import RequestBudget
+from pr_investigator.review.decisions import Decision, DecisionStore, ReasonCode
 from pr_investigator.review.report import create_run_dir, render_markdown, save_run
 from pr_investigator.review.reviewers import AnyReview, Reviewer, check_toolset, run_reviewer
 from pr_investigator.tools import Toolset
@@ -160,6 +163,99 @@ async def _run_reviewer(
             index_db=settings.index_db,
             context=context,
         )
+
+
+@app.command()
+def serve(
+    port: Annotated[int, typer.Option(min=1, max=65535, help="Port to listen on.")] = 8000,
+    token: Annotated[
+        str | None,
+        typer.Option(envvar="PRI_UI_TOKEN", help="Sign-in token (random if unset)."),
+    ] = None,
+) -> None:
+    """Start the review UI on localhost: runs, evidence, decisions and a publish preview."""
+    import uvicorn
+
+    from pr_investigator.web.app import create_app
+
+    settings = _settings()
+    web = create_app(settings, token=token)
+    err.print(f"Review UI: http://127.0.0.1:{port}  sign-in token: {web.state.token}")
+    err.print(
+        "[dim]Listens on localhost only. Publishing needs GITHUB_TOKEN and your confirmation.[/]"
+    )
+    uvicorn.run(web, host="127.0.0.1", port=port, log_level="warning")
+
+
+@app.command()
+def publish(
+    run_id: Annotated[str, typer.Argument(help="A run id (see `pri serve` or .pri/runs).")],
+    approve: Annotated[
+        list[str] | None, typer.Option("--approve", help="Approve this finding id (repeatable).")
+    ] = None,
+    approve_posted: Annotated[
+        bool, typer.Option("--approve-posted", help="Approve every finding in the noise budget.")
+    ] = False,
+    reject: Annotated[
+        list[str] | None, typer.Option("--reject", help="Reject this finding id (repeatable).")
+    ] = None,
+    reason: Annotated[
+        ReasonCode, typer.Option(help="Reason code for the findings given to --reject.")
+    ] = ReasonCode.NOT_IMPORTANT,
+    post: Annotated[
+        bool, typer.Option("--post", help="Really post the review. Without it: preview only.")
+    ] = False,
+    allow_stale: Annotated[
+        bool, typer.Option("--allow-stale", help="Post even if the PR has new commits.")
+    ] = False,
+) -> None:
+    """Record decisions for a run's findings, then preview (default) or post the review."""
+    from pr_investigator.publish import publish as publish_review
+    from pr_investigator.web.app import load_run
+
+    settings = _settings()
+    store = DecisionStore(settings.review_db)
+    client: GitHubClient | None = None
+    try:
+        review = load_run(settings.runs_dir, run_id)
+        known = {f.id for f in review.findings}
+        chosen = set(approve or [])
+        if approve_posted:
+            chosen |= set(getattr(review, "posted_ids", []))
+        unknown = (chosen | set(reject or [])) - known
+        if unknown:
+            raise PRIError(f"unknown finding ids: {', '.join(sorted(unknown))}")
+        for finding_id in sorted(chosen):
+            store.decide(run_id, finding_id, Decision.APPROVED, reviewer="cli")
+        for finding_id in sorted(set(reject or [])):
+            store.decide(run_id, finding_id, Decision.REJECTED, reviewer="cli", reason_code=reason)
+        token = settings.github_token
+        if token is None:
+            raise PRIError("publishing needs GITHUB_TOKEN (pull request write access)")
+        client = GitHubClient(token.get_secret_value())
+        result = publish_review(
+            client, review, store, run_id=run_id, post=post, allow_stale=allow_stale
+        )
+    except PRIError as exc:
+        raise _fail(exc) from exc
+    except HTTPException as exc:
+        raise _fail(PRIError(f"no such run: {run_id}")) from exc
+    finally:
+        store.close()
+        if client is not None:
+            client.close()
+    console.print_json(json.dumps(result.built.payload))
+    if result.status == "preview":
+        err.print("[yellow]Preview only.[/] Nothing was posted. Add --post to send this review.")
+    elif result.status == "already_published":
+        err.print(f"Already published (idempotency marker found): {result.url}")
+    else:
+        note = (
+            " (GitHub rejected an anchor, so comments went into the summary)"
+            if result.fell_back
+            else ""
+        )
+        err.print(f"Posted: {result.url}{note}")
 
 
 @app.command()

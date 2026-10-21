@@ -159,3 +159,25 @@ def test_eval_run_with_an_agentic_reviewer_writes_traces(
     assert (out / "traces" / f"{case}-s0.jsonl").is_file()
     shown = runner.invoke(app, ["show", str(out / "traces" / f"{case}-s0.jsonl")])
     assert shown.exit_code == 0 and f"Run: {reviewer} review of" in shown.output
+
+
+def test_publish_needs_a_token_and_never_posts_without_one(tmp_path: Path) -> None:
+    from pr_investigator.review.report import write_run
+    from tests.support_reviews import make_review
+
+    data = tmp_path / "pri-data"
+    write_run(make_review(), data / "runs", "20261021-120000-abc")
+    result = runner.invoke(app, ["publish", "20261021-120000-abc", "--approve", "F1"])
+    assert result.exit_code != 0 and "GITHUB_TOKEN" in result.output
+
+
+def test_publish_rejects_unknown_findings_and_unknown_runs(tmp_path: Path) -> None:
+    from pr_investigator.review.report import write_run
+    from tests.support_reviews import make_review
+
+    data = tmp_path / "pri-data"
+    write_run(make_review(), data / "runs", "20261021-120000-abc")
+    unknown = runner.invoke(app, ["publish", "20261021-120000-abc", "--approve", "F9"])
+    assert unknown.exit_code != 0 and "unknown finding ids: F9" in unknown.output
+    missing = runner.invoke(app, ["publish", "nope", "--approve", "F1"])
+    assert missing.exit_code != 0 and "no such run" in missing.output
