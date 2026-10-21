@@ -95,7 +95,8 @@ def review(
         Reviewer,
         typer.Option(
             "--reviewer",
-            help="a2 (default): planner, then one investigation per suspect. a1: one agent "
+            help="a2 (default): planner, then one investigation per suspect. a3: a2, then a "
+            "skeptic checks each finding and a noise budget picks what to post. a1: one agent "
             "loop over the whole PR. b0: one call on the diff (the Phase 1 baseline). b1: "
             "one call on the diff plus the context pack and leads.",
         ),
@@ -296,7 +297,8 @@ def eval_run(
     provider: ProviderOpt = None,
     model: ModelOpt = None,
     reviewer: Annotated[
-        Reviewer, typer.Option("--reviewer", help="Which reviewer to evaluate: b0, b1, a2 or a1.")
+        Reviewer,
+        typer.Option("--reviewer", help="Which reviewer to evaluate: b0, b1, a2, a3 or a1."),
     ] = Reviewer.B0,
     traces: Annotated[
         bool, typer.Option(help="Write a trace per case to <results>/traces (a1 and a2 only).")

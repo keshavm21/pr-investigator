@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pr_investigator.agent.investigate import a2_prompts, review_a2
 from pr_investigator.agent.models import AgentBudget, AgentReview
+from pr_investigator.agent.pipeline import a3_prompts, review_a3
 from pr_investigator.agent.single import a1_prompts, review_a1
 from pr_investigator.diff import ParsedDiff
 from pr_investigator.domain import ReviewTarget
@@ -37,13 +38,16 @@ class Reviewer(StrEnum):
     B1 = "b1"  # B0 plus the deterministic context pack and leads
     A1 = "a1"
     A2 = "a2"
+    A3 = "a3"  # A2, then the skeptic verifier and aggregation
 
     @property
     def agentic(self) -> bool:
-        return self in (Reviewer.A1, Reviewer.A2)
+        return self in (Reviewer.A1, Reviewer.A2, Reviewer.A3)
 
 
 def reviewer_prompts(reviewer: Reviewer, toolset: Toolset = Toolset.BASE) -> tuple[Prompt, ...]:
+    if reviewer is Reviewer.A3:
+        return a3_prompts(toolset)
     if reviewer is Reviewer.A2:
         return a2_prompts(toolset)
     if reviewer is Reviewer.A1:
@@ -99,6 +103,19 @@ async def run_reviewer(
                 max_diff_chars=max_diff_chars,
                 sample=sample,
                 context=render_context(workspace, diff, index) or None,
+            )
+        if reviewer is Reviewer.A3:
+            return await review_a3(
+                target,
+                workspace,
+                diff,
+                client,
+                max_diff_chars=max_diff_chars,
+                budget=budget,
+                sample=sample,
+                trace=trace,
+                toolset=toolset,
+                index=index,
             )
         if reviewer is Reviewer.A2:
             return await review_a2(

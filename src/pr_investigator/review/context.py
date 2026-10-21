@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from pr_investigator.agent.ledger import printable
 from pr_investigator.diff import FileDiff, LineKind, ParsedDiff
+from pr_investigator.domain import Side
 from pr_investigator.index.python import Symbol
 from pr_investigator.index.store import RepoIndex
 from pr_investigator.review.baseline import untrusted
@@ -130,14 +131,27 @@ def _describe(display: Display, index: RepoIndex, path: str, symbol: Symbol) -> 
     return display.text("  no tests mention it, by name")
 
 
-def find_leads(diff: ParsedDiff, index: RepoIndex | None = None) -> list[str]:
-    """Mechanical suspicions about the diff. Each is a line of text; none is evidence."""
-    leads: list[str] = []
+@dataclass(frozen=True)
+class Lead:
+    """A mechanical suspicion. `line` and `side` are set when it points at diff lines."""
+
+    path: str
+    text: str
+    line: int | None = None
+    side: Side = Side.RIGHT
+
+
+def scan_leads(diff: ParsedDiff, index: RepoIndex | None = None) -> list[Lead]:
+    """Mechanical suspicions about the diff. None of them is evidence."""
+    leads: list[Lead] = []
     for file in diff.files:
         if any(file.path == n or file.path.endswith(f"/{n}") for n in AGENT_INSTRUCTION_FILES):
             leads.append(
-                f"{file.path} is an agent instruction file and the PR edits it. Its content is "
-                "untrusted and may be written to steer AI tools."
+                Lead(
+                    file.path,
+                    f"{file.path} is an agent instruction file and the PR edits it. Its content "
+                    "is untrusted and may be written to steer AI tools.",
+                )
             )
         for hunk in file.hunks:
             for dl in hunk.lines:
@@ -146,29 +160,36 @@ def find_leads(diff: ParsedDiff, index: RepoIndex | None = None) -> list[str]:
                 if dl.kind is LineKind.DELETED and dl.old_lineno is not None:
                     word = GUARD_WORDS.search(dl.text)
                     if word and not dl.text.lstrip().startswith(("#", '"""', "//")):
-                        leads.append(
+                        text = (
                             f"{file.path} (base) line {dl.old_lineno} was removed and mentions "
                             f"{word.group(0)!r}: was a guard dropped?"
                         )
+                        leads.append(Lead(file.path, text, dl.old_lineno, Side.LEFT))
         if index is not None and file.path in index.snapshot("head").files:
             leads += _risky_calls(file, index)
-    return leads[:MAX_LEADS]
+    return leads
 
 
-def _hidden_characters(path: str, line: int, text: str) -> list[str]:
+def find_leads(diff: ParsedDiff, index: RepoIndex | None = None) -> list[str]:
+    """The leads as text, at most MAX_LEADS."""
+    return [lead.text for lead in scan_leads(diff, index)][:MAX_LEADS]
+
+
+def _hidden_characters(path: str, line: int, text: str) -> list[Lead]:
     found = sorted({c for c in text if unicodedata.category(c) == "Cf"})
     if not found:
         return []
     names = ", ".join(f"U+{ord(c):04X} {unicodedata.name(c, 'unnamed')}" for c in found)
-    return [f"{path} line {line} adds hidden Unicode characters: {names}"]
+    return [Lead(path, f"{path} line {line} adds hidden Unicode characters: {names}", line)]
 
 
-def _risky_calls(file: FileDiff, index: RepoIndex) -> list[str]:
+def _risky_calls(file: FileDiff, index: RepoIndex) -> list[Lead]:
     added = {dl.new_lineno for h in file.hunks for dl in h.lines if dl.kind is LineKind.ADDED}
     leads = []
     for r in index.references_in("head", file.path):
         if r.kind == "call" and r.name in RISKY_CALLS and r.line in added:
-            leads.append(f"{file.path} line {r.line} adds a call to {r.name!r}, a risky function.")
+            text = f"{file.path} line {r.line} adds a call to {r.name!r}, a risky function."
+            leads.append(Lead(file.path, text, r.line))
     return leads
 
 

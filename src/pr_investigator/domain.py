@@ -85,6 +85,9 @@ class Finding(BaseModel):
         default_factory=list,
         description="Verified evidence with system-extracted snippets (agentic reviewers only)",
     )
+    verification: Literal["upheld", "refuted", "uncertain"] | None = Field(
+        default=None, description="The skeptic verifier's outcome (A3 only)"
+    )
 
 
 class PullRequestRef(BaseModel):

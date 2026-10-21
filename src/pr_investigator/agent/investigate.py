@@ -33,7 +33,9 @@ from pr_investigator.index.store import RepoIndex
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.prompts import Prompt, load_prompt
 from pr_investigator.llm.types import Effort
+from pr_investigator.review.aggregate import aggregate
 from pr_investigator.review.baseline import untrusted
+from pr_investigator.review.context import scan_leads
 from pr_investigator.tools import ToolContext, ToolResult, Toolset, run_tool
 from pr_investigator.trace import Trace, errors_traced
 from pr_investigator.workspace import Workspace
@@ -167,11 +169,14 @@ async def _review_a2(
         cached_requests += investigation.loop.cached_turns
         retries += investigation.loop.retries
 
+    ranked = aggregate(findings.items, [], scan_leads(diff, index), verified=False)
     return AgentReview(
         reviewer=REVIEWER,
         target=target,
         summary=plan.summary,
-        findings=findings.items,
+        findings=ranked.kept,
+        posted_ids=ranked.posted_ids,
+        strengths=ranked.strengths,
         coverage=plan.coverage,
         provider=client.provider,
         model=client.model,

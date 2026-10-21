@@ -255,10 +255,15 @@ The layers run from cheap to expensive:
 
 The eval measures how many true positives the verifier removes, not only how many false positives.
 
+**As built in Phase 4** (`agent/skeptic.py`, `agent/pipeline.py`, prompt `skeptic.v1`; reviewer `a3` = A2 plus these steps).
+- The skeptic is an `AgentLoop` with the Phase 1 tools, 5 turns and terminal tool `submit_check`. Its opening message holds only the claim, the system-extracted evidence snippets and the diff of the anchored file. A *refuted* outcome must cite at least one context or absence item that passes the mechanical evidence check; otherwise the submission is sent back. A skeptic that never submits an accepted check leaves the finding *uncertain*, never refuted.
+- Analyzer corroboration is the leads (§4.4): a lead on the finding's anchored lines adds 1 to its strength. No Semgrep/Opengrep (D12 closed in Phase 3).
+- Execution verification (S1) is not built.
+
 ### 4.10 Aggregation, ranking and rendering
 
-- **Dedupe.** Findings with overlapping anchors and the same root cause are merged. A low-effort LLM call compares candidates on the same lines.
-- **Rank.** Findings are ranked by severity × verification strength. The strength levels, weakest first: grounded, analyzer-corroborated, upheld by the skeptic, demonstrated by execution. Self-reported confidence is only a tie-breaker. Thresholds are calibrated on the eval set to hit a target precision.
+- **Dedupe.** Findings with overlapping anchors and the same root cause are merged. A low-effort LLM call compares candidates on the same lines. *As built:* the reviewers drop a finding whose anchored lines another finding already covers (no LLM call, so two distinct problems on the same lines are reported once).
+- **Rank.** (*As built in `review/aggregate.py`:* strength is 1 for grounded, +1 if a lead is on the finding's lines, +2 if the skeptic upheld it; score is severity weight 4/3/2/1 × strength; ties by confidence, then location. Thresholds are the fixed D17 values, not calibrated: the eval set is too small to calibrate on.) Findings are ranked by severity × verification strength. The strength levels, weakest first: grounded, analyzer-corroborated, upheld by the skeptic, demonstrated by execution. Self-reported confidence is only a tie-breaker. Thresholds are calibrated on the eval set to hit a target precision.
 - **Noise budget** (D17). By default at most 7 comments are posted, and only findings that are severity medium or higher and upheld by the verifier. Everything else stays visible in the UI as "not posted by default".
 - **Anchoring.**
   - The comment goes on the diff lines that cause the problem.
@@ -268,6 +273,7 @@ The eval measures how many true positives the verifier removes, not only how man
   - Comments are rendered from structured fields through a fixed template: title, severity, explanation, evidence as permalinks to the analyzed commit, and an optional `suggestion` block.
   - A suggestion is included only when it replaces exactly the anchored lines and the patched file still parses.
   - Output is sanitized ([security.md](security.md) §5.4): no raw HTML, images, external links or live @-mentions. Outgoing text is scanned for secrets.
+  - *As built (`review/comments.py`):* `resolve_anchor` keeps a multi-line range only if both ends share a hunk, else falls back to the first line, the last line, then the summary; comments carry no code snippets, only permalinks to the analyzed commit (plain `path:lines` for local runs). The model's `suggested_fix` is free text, so it's rendered as text; **suggestion blocks are not generated** (that needs replacement code and a parse check). The review summary lists every finding that isn't an inline comment.
 
 ### 4.11 Human review
 
@@ -601,11 +607,12 @@ pr-investigator/
 │   ├── trace.py              # JSONL run traces and their rendering for `pri show`
 │   ├── tools/                # read-only tools (base and structural), output budgets, path confinement
 │   ├── index/                # tree-sitter facts per blob, the SQLite structural index
-│   ├── agent/                # ledger, evidence check, loop, verdicts, planner, A2, A1
+│   ├── agent/                # ledger, evidence check, loop, verdicts, planner, A2, A1, skeptic, A3
 │   ├── llm/                  # LLMClient, types, Gemini/fake adapters, cache, guards, factory
 │   ├── prompts/              # versioned prompts: baseline_review, judge, planner,
-│   │                         #   investigator, single_agent, agent_loop (v5: structural tools)
-│   ├── review/               # B0, the shared reviewer entry point, run reports
+│   │                         #   investigator, single_agent, agent_loop, skeptic (v5: structural tools)
+│   ├── review/               # B0/B1, context pack and leads, aggregation, comment rendering,
+│   │                         #   the shared reviewer entry point, run reports
 │   └── evaluation/           # cases, materialization, matching, metrics, runner
 ├── evals/
 │   ├── fixtures/             # base projects the cases change (inventory_service, werkzeug)

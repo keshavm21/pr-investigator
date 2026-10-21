@@ -70,7 +70,7 @@ def test_eval_run_keeps_b0_as_its_default() -> None:
     assert defaults["reviewer"] is Reviewer.B0
 
 
-@pytest.mark.parametrize("reviewer", ["a2", "a1"])
+@pytest.mark.parametrize("reviewer", ["a3", "a2", "a1"])
 def test_agentic_reviews_write_a_trace_that_show_renders(
     local_pr: Path, tmp_path: Path, reviewer: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -142,7 +142,7 @@ def test_eval_validate_and_run(tmp_path: Path) -> None:
     assert (out / "summary.md").is_file() and (out / "results.jsonl").is_file()
 
 
-@pytest.mark.parametrize("reviewer", ["a2", "a1"])
+@pytest.mark.parametrize("reviewer", ["a3", "a2", "a1"])
 def test_eval_run_with_an_agentic_reviewer_writes_traces(
     tmp_path: Path, reviewer: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -5,6 +5,7 @@ whose evidence passed the mechanical check, anchored on its first defect site. A
 anchor overlaps one already reported is treated as a duplicate and not reported again.
 """
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -84,8 +85,24 @@ class Investigation(BaseModel):
     duplicate_of: str | None = None  # confirmed, but the same problem was already reported
 
 
+class SkepticStatus(StrEnum):
+    UPHELD = "upheld"
+    REFUTED = "refuted"
+    UNCERTAIN = "uncertain"
+
+
+class Verification(BaseModel):
+    """What the skeptic concluded about one finding (A3)."""
+
+    finding_id: str
+    status: SkepticStatus
+    explanation: str
+    evidence: list[Evidence] = Field(default_factory=list)
+    loop: LoopRecord
+
+
 class AgentReview(BaseModel):
-    reviewer: Literal["a1", "a2"]
+    reviewer: Literal["a1", "a2", "a3"]
     target: ReviewTarget
     summary: str
     findings: list[Finding]
@@ -100,6 +117,10 @@ class AgentReview(BaseModel):
     dropped_suspects: list[DroppedSuspect] = Field(default_factory=list)
     investigations: list[Investigation] = Field(default_factory=list)
     single: LoopRecord | None = None  # A1's loop
+    verifications: list[Verification] = Field(default_factory=list)  # A3
+    refuted: list[Finding] = Field(default_factory=list)  # A3: findings the skeptic refuted
+    posted_ids: list[str] = Field(default_factory=list)  # A3: findings inside the noise budget
+    strengths: dict[str, int] = Field(default_factory=dict)  # A3: finding id -> strength
     usage: Usage = Field(default_factory=Usage)
     requests: int = 0  # model requests, cached ones included
     cached_requests: int = 0

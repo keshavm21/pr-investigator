@@ -216,3 +216,49 @@ The step 5 ablation: five configurations on the 15 held-out test cases (13 issue
 | A2 with the context pack | **Not done** | Left out for time and quota; the next candidate when the planner is revisited |
 
 **Reading for the project.** The agentic loop's value on this suite comes from its structure (A2's planner and verification of evidence), not from extra context. The cheapest strong configuration is B1: one request, 100% precision. Phase 4 (verification) targets exactly the weak spot: an independent check that does not share the author's framing.
+
+## Phase 4: the skeptic verifier (A3) and the noise budget
+
+Phase 4 adds a skeptic verifier (a fresh agent loop that tries to refute each finding and may only remove one with grounded refuting evidence), ranking by severity × verification strength, and the D17 noise budget (at most 7 comments per PR, severity medium or higher, upheld by the verifier). A3 is A2 followed by these steps. The verifier prompt (`skeptic.v1`) was written once and checked on the dev split; it was not tuned on the test split (D26).
+
+Both runs replay A2's earlier answers from the cache, so A3 is compared with A2 on the same findings.
+
+| Test split (1 sample) | A2 | A3 (A2 + skeptic) |
+|---|---|---|
+| Findings before / after the skeptic | 11 | 11 kept, 0 refuted |
+| Skeptic outcomes | n/a | 10 upheld, 1 uncertain, 0 refuted |
+| Precision (raw / adjudicated) | 73% / 91% | 73% / 91% |
+| Recall (raw / adjudicated) | 62% / 77% | 62% / 77% |
+| Decoys flagged | 1 of 3 | 1 of 3 |
+| Requests per PR (mean / max) | 7.6 / 18 | 10.5 / 21 |
+
+| Dev split (1 sample) | A2 base | A3 |
+|---|---|---|
+| Skeptic outcomes | n/a | 10 upheld, 0 uncertain, 0 refuted |
+| Precision / recall | 89% / 73% | 90% / 82% |
+
+- **Directories:** `20261021-a3-gemini-3.5-flash-lite-test/` and `20261021-a3-gemini-3.5-flash-lite-dev/`, both with traces. 47 and 44 real requests.
+- **The dev difference is not the verifier.** On one dev case (the redirect escape) A2's stage did not fully replay from the cache, so A3's A2 stage found an issue that the earlier A2 dev run missed. The skeptic refuted nothing there either. A likely cause: `search_code` shows the first `max_results` matches in ripgrep's output order, which can vary between runs, so a search cut short can show different lines and send the agent down a different path. This is a known reproducibility gap (invariant 7); the fix (sort matches before truncating) will invalidate cached replays, so it is left for a later change.
+- **Adjudicated** as in the A2 baseline: the cancellation IDOR and the converter rename are correct findings that location-only matching misses; the ProxyFix logging finding on the decoy is the one real false positive.
+
+**The skeptic did nothing useful here.** It upheld every finding it was given, including the decoy's false positive on dev and test, and returned "uncertain" on one correct, critical finding (the removed debugger PIN check), which the D17 rule then keeps out of the posted set. Refuted: none, so it removed no false positive and no true positive. Its cost was about 3.5 extra requests per finding (+38% per PR). The most likely reason is that the skeptic is the same small model that wrote the findings, with the same blind spot: in the traces it reads the cited code and the explanation and agrees. A different or stronger verifier model could behave differently, but is not testable inside the free tier.
+
+**What the noise budget and ranking do** (computed from the A3 test findings; the budget applies per PR, and no test PR had more than 2 findings, so the cap of 7 never bit):
+
+| Test split | Findings | Correct (raw / adjudicated) | Recall (raw / adjudicated) |
+|---|---|---|---|
+| A2, everything it reported | 11 | 8 / 10 | 62% / 77% |
+| A2 + noise budget (medium or higher; no verifier) | 10 | 8 / 10 | 62% / 77% |
+| A3 posted (also needs "upheld") | 9 | 7 / 9 | 54% / 69% |
+
+The severity rule removes the low-severity decoy finding, raising precision to 100% adjudicated (80% raw) at no cost in recall. Requiring "upheld" from this verifier then costs one correct finding and gains nothing.
+
+**Decisions.**
+
+| Component | Decision | Why |
+|---|---|---|
+| Skeptic verifier (`--reviewer a3`) | **Keep, opt-in; not the default** | It removed nothing, demoted one true positive and costs 38% more requests. The code is small and tested; the open question is a stronger verifier model |
+| Ranking and the noise budget | **Keep, and apply to A1 and A2 too** | Pure code, no cost. Without a verifier, every kept finding of medium severity or higher is postable (`verified=False`); with the verifier, "upheld" is also required |
+| Rendering, sanitizer, secret scanner, anchor resolution | **Keep** | Required for posting; covered by unit tests, including a model that obeys every injection |
+| Suggestion blocks | **Not built** | The model's fix is free text, not replacement code that can be checked to parse |
+| Injection fixtures in the live eval suite | **Not built** | The unit and pipeline tests cover the output layer with scripted models; live injection cases would use quota to test the model, not the guarantees |

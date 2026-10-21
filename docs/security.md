@@ -129,7 +129,8 @@ Everything the LLM writes is untrusted output.
   - user and team @-mentions are neutralized
   - length is capped
 - **Secret scanning.** Outgoing text is scanned (known patterns plus entropy) and blocked or redacted on a match. A committed secret becomes its own finding, with the value redacted.
-- **Suggestion blocks** may only replace the anchored lines, and the patched file must still parse. The UI shows the suggestion as a diff, with a warning, before approval.
+- *As built (Phase 4, `review/comments.py`):* the sanitizer removes raw HTML and comments, images, control and invisible characters (bidi overrides included), every link except permalinks into the reviewed repository at the analyzed commit, and wraps @-mentions in code spans so they don't notify; fields are length-capped. The secret scanner redacts known formats (AWS, GitHub, Slack, Google, OpenAI-style keys, private key blocks, JWTs) and any 32+ character token with entropy of at least 4.2 bits per character. Comments carry no code snippets. Unit tests assume a model that obeyed every injected instruction (`tests/unit/test_comments.py`).
+- **Suggestion blocks** may only replace the anchored lines, and the patched file must still parse. (Not generated yet: findings carry a text fix, not replacement code.) The UI shows the suggestion as a diff, with a warning, before approval.
 - **The review UI** escapes or sanitizes all repository text and LLM output to prevent XSS.
 - **Local outputs (Phase 2).** Evidence snippets are re-read from the repository at the analyzed commit, never taken from model output. In `review.md`, each snippet sits in a code fence longer than any run of backticks inside it, so repository text can't end the block. `pri show` escapes control characters in everything it prints, so a trace can't carry terminal escape sequences to the screen.
 

@@ -89,6 +89,9 @@ def read_trace(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+_SCOPE_HEADERS = ("investigation_start", "verification_start")
+
+
 def render_trace(events: list[dict[str, Any]], *, full: bool = False) -> str:
     """A readable timeline: the run, the plan, each investigation's turns, then the findings.
     With `full`, model text, opening messages and complete tool output are included."""
@@ -97,7 +100,7 @@ def render_trace(events: list[dict[str, Any]], *, full: bool = False) -> str:
     for event in events:
         kind = event.get("event")
         scope = event.get("scope")
-        if scope is not None and scope != current_scope and kind != "investigation_start":
+        if scope is not None and scope != current_scope and kind not in _SCOPE_HEADERS:
             current_scope = scope
             out += ["", f"== {scope} =="]
         if kind == "run_start":
@@ -141,6 +144,14 @@ def render_trace(events: list[dict[str, Any]], *, full: bool = False) -> str:
             out.append(outcome)
             if event.get("claim"):
                 out.append(f"    {event['claim']}")
+        elif kind == "verification_start":
+            current_scope = scope
+            finding = event.get("finding", {})
+            out += ["", f"== {scope}: skeptic checks {finding.get('title', '')} =="]
+        elif kind == "verification_end":
+            out.append(f"  skeptic: {event.get('status')}")
+            if event.get("explanation"):
+                out.append(f"    {event['explanation']}")
         elif kind == "run_end":
             out += _run_end(event)
         elif kind == "error":

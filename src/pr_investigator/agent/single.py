@@ -29,8 +29,9 @@ from pr_investigator.index.store import RepoIndex
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.prompts import Prompt, load_prompt
 from pr_investigator.llm.types import Effort, ToolSpec
+from pr_investigator.review.aggregate import aggregate
 from pr_investigator.review.baseline import Coverage, render_diff, untrusted
-from pr_investigator.review.context import build_context_pack, find_leads
+from pr_investigator.review.context import build_context_pack, find_leads, scan_leads
 from pr_investigator.tools import Observation, Toolset
 from pr_investigator.tools.get_diff import file_observations
 from pr_investigator.trace import Trace, errors_traced
@@ -231,10 +232,13 @@ async def _review_a1(
                 evidence=checked.evidence,
                 anchor=checked.anchor,
             )
+    ranked = aggregate(findings.items, [], scan_leads(diff, index), verified=False)
     return review.model_copy(
         update={
             "summary": summary,
-            "findings": findings.items,
+            "findings": ranked.kept,
+            "posted_ids": ranked.posted_ids,
+            "strengths": ranked.strengths,
             "single": record,
             "usage": record.usage,
             "requests": record.turns,

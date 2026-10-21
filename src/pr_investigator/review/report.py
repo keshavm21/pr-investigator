@@ -11,6 +11,7 @@ from pathlib import Path
 from pr_investigator.agent.models import AgentReview
 from pr_investigator.domain import Evidence, EvidenceRole, Finding, Severity
 from pr_investigator.review.baseline import ReviewResult
+from pr_investigator.review.comments import render_review, scan_secrets
 from pr_investigator.review.reviewers import AnyReview
 
 _SEVERITY_ORDER = {Severity.CRITICAL: 0, Severity.HIGH: 1, Severity.MEDIUM: 2, Severity.LOW: 3}
@@ -39,7 +40,8 @@ def render_markdown(result: AnyReview) -> str:
     ]
     if not result.findings:
         lines.append("No findings.")
-    for finding in sorted_findings(result.findings):
+    ranked = isinstance(result, AgentReview) and result.reviewer in ("a1", "a2", "a3")
+    for finding in result.findings if ranked else sorted_findings(result.findings):
         anchor = finding.anchor
         where = f"{anchor.path}:{anchor.start_line}"
         if anchor.end_line != anchor.start_line:
@@ -47,9 +49,14 @@ def render_markdown(result: AnyReview) -> str:
         if anchor.side.value == "LEFT":
             where += " (deleted lines)"
         flag = "" if finding.anchor_in_diff else " (anchor outside the diff)"
+        checked = f" · skeptic: {finding.verification}" if finding.verification else ""
+        posted = ""
+        if isinstance(result, AgentReview):
+            posted = " · posted by default" if finding.id in result.posted_ids else " · not posted"
         lines += [
             f"## [{finding.severity.value}] {finding.title}",
-            f"`{where}`{flag} · {finding.category.value} · confidence {finding.confidence.value}",
+            f"`{where}`{flag} · {finding.category.value} · confidence "
+            f"{finding.confidence.value}{checked}{posted}",
             "",
             finding.explanation,
         ]
@@ -60,11 +67,14 @@ def render_markdown(result: AnyReview) -> str:
             lines += [line for item in finding.evidence for line in _evidence(item)]
         lines.append("")
     if isinstance(result, AgentReview):
+        lines += _verification(result)
+        lines += _comments(result) if not result.verifications else []
         lines += _investigations(result)
     if result.coverage.skipped:
         lines += ["## Not reviewed", ""]
         lines += [f"- {path}: {reason}" for path, reason in result.coverage.skipped.items()]
-    return "\n".join(lines).rstrip() + "\n"
+    # Last pass over everything, model text included: a secret never reaches a report.
+    return scan_secrets("\n".join(lines).rstrip() + "\n")[0]
 
 
 def _reviewer_line(result: AnyReview) -> str:
@@ -96,6 +106,40 @@ def _evidence(item: Evidence) -> list[str]:
         f"  {fence}",
         "",
     ]
+
+
+def _verification(result: AgentReview) -> list[str]:
+    if not result.verifications:
+        return []
+    lines = ["## Verification", ""]
+    for v in result.verifications:
+        strength = result.strengths.get(v.finding_id)
+        extra = f", strength {strength}" if strength is not None else ""
+        lines.append(f"- {v.finding_id}: {v.status.value}{extra}. {_one_line(v.explanation)}")
+    lines.append("")
+    if result.refuted:
+        lines += ["## Refuted by the skeptic (not reported)", ""]
+        for f in result.refuted:
+            lines.append(f"- {_one_line(f.title)} (`{f.anchor.path}:{f.anchor.start_line}`)")
+        lines.append("")
+    lines += _comments(result)
+    return lines
+
+
+def _comments(result: AgentReview) -> list[str]:
+    rendered = render_review(result)
+    if not rendered.comments:
+        return ["## Comments that would be posted", "", "None.", ""]
+    lines = ["## Comments that would be posted", ""]
+    for comment in rendered.comments:
+        a = comment.anchor
+        lines += [
+            f"### {comment.finding_id} at `{a.path}:{a.start_line}-{a.end_line}` ({a.side.value})",
+            "",
+            *[f"> {line}" for line in comment.body.split("\n")],
+            "",
+        ]
+    return lines
 
 
 def _investigations(result: AgentReview) -> list[str]:

@@ -29,6 +29,7 @@ class AgentStats(BaseModel):
         loops = [i.loop for i in review.investigations]
         if review.single is not None:
             loops.append(review.single)
+        loops += [v.loop for v in review.verifications]
         return cls(
             suspects=len(review.suspects),
             dropped_suspects=len(review.dropped_suspects),

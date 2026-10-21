@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Status (2026-10-21):** Phases 1 and 2 are complete and merged. Phase 3 is complete: the structural index and tools, the context pack (B1) and the leads are built, and the ablations on the held-out test split are committed with a decision for each component. A2 is the default reviewer (D5). Phase 4 (verification, aggregation and rendering) is next and needs your approval to start.
+> **Status (2026-10-21):** Phases 1 to 4 are complete. Phase 3 is complete: the structural index and tools, the context pack (B1) and the leads are built, and the ablations on the held-out test split are committed with a decision for each component. A2 is the default reviewer (D5). Phase 4 is complete too: the skeptic verifier (A3, opt-in: it removed no false positive on this model), ranking and the noise budget (applied to A1 and A2), and sanitized comment rendering with secret scanning. Phase 5 (review UI and GitHub publishing) is next and needs your approval to start.
 
 The order follows risk. The most uncertain question is whether agentic investigation produces precise, evidence-backed findings at acceptable cost, so it gets built and measured first. GitHub App plumbing and the UI are well-understood engineering and come later.
 
@@ -258,12 +258,14 @@ Results are reported on the test split (`pri eval run --split test`). Dev cases 
   - the outgoing secret scanner
   - suggestion validation (replaces only the anchored lines; the patched file still parses)
 - **Injection handling.** The injection-as-finding category and the injection fixture suite ([security.md](security.md) §6).
-- **Eval.** A2 versus A3, including true positives removed by the verifier.
+- **Eval.** A2 versus A3, including true positives removed by the verifier. **Done** ([results](../evals/results/README.md#phase-4-the-skeptic-verifier-a3-and-the-noise-budget)): the verifier removed none; it demoted one true positive and cost 38% more requests.
 
 **Exit criteria**
 
-- The full-pipeline (A3) results are committed.
-- The sanitizer and injection tests are green.
+- The full-pipeline (A3) results are committed. **Met.**
+- The sanitizer and injection tests are green. **Met** (`tests/unit/test_comments.py`, and a full-pipeline injection test in `tests/unit/test_reviewers.py`).
+
+**As built, and what was left out:** analyzer corroboration is the leads, with no Semgrep/Opengrep (D12); dedupe is by anchor overlap without an LLM call; thresholds are the fixed D17 values (the eval set is too small to calibrate); suggestion blocks are not generated; the injection fixtures run offline with scripted models, not as live eval cases.
 
 **Main risks:** the verifier removing true positives (measured, and its prompt tuned), and dedupe merging distinct issues.
 

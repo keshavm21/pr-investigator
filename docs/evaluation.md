@@ -118,7 +118,7 @@ The judge runs on the configured free model. A judge from a different model fami
 | B1 | Single call, diff plus the deterministic context pack | Value of non-agentic context |
 | A1 | One agent loop with all tools, no planner | Value of the planner |
 | A2 | Planner plus one investigation per suspect (sequential in Phase 2), no verifier | Value of agentic investigation over B1 (in Phase 2, over B0) |
-| A3 | A2 plus verifier (the full pipeline) | Value of verification |
+| A3 | A2 plus verifier (the full pipeline) | Value of verification. Measured in Phase 4: no gain on this model ([results](../evals/results/README.md#phase-4-the-skeptic-verifier-a3-and-the-noise-budget)) |
 | A3−sem | A3 without semantic search and convention leads | Value of semantic retrieval |
 | A3+LSP | A3 with precise references (S2) | Value of precise code intelligence |
 
