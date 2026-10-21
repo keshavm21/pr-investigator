@@ -15,7 +15,7 @@ the review comment.
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pr_investigator.agent.ledger import ObservationLedger
 from pr_investigator.diff import ParsedDiff
@@ -35,8 +35,28 @@ def lowercase(value: Any) -> Any:
     return value.strip().lower() if isinstance(value, str) else value
 
 
+_LINE_KEYS = ("path", "start_line", "end_line")
+
+
+def _wire_schema(schema: dict[str, Any]) -> None:
+    """Keep the tool schema the model sees as it always was: the three line keys are listed
+    as required (models leave optional keys out of line evidence), with no defaults shown.
+    Parsing is more forgiving than the schema, see EvidenceRef; the response cache is keyed on
+    this schema, so it must not drift."""
+    schema["required"] = ["observation_id", "role", *_LINE_KEYS, "note"]
+    for key in _LINE_KEYS:
+        schema["properties"][key].pop("default", None)
+
+
+# The schema asks for all six keys, but only line evidence needs the line keys. An absence item
+# that leaves them out is valid (seen in trace 20261021-191323-04ab5b: the error
+# `evidence.1.start_line: Field required` pushed the model to invent line numbers for an absence
+# item). Line evidence that leaves them out is rejected by the evidence check, with a message
+# naming what is missing. This docstring is the schema's description, so it stays one line.
 class EvidenceRef(BaseModel):
     """One evidence item as the model submits it."""
+
+    model_config = ConfigDict(json_schema_extra=_wire_schema)
 
     _role_case = field_validator("role", mode="before")(lowercase)
 
@@ -69,13 +89,16 @@ class EvidenceRef(BaseModel):
     # Required keys, even though absence items set them to null: models leave optional line
     # fields out of line evidence (seen in the live smoke review and the first A2 eval).
     path: str | None = Field(
-        description="The observation's file path. Always give it; null only for absence."
+        default=None,
+        description="The observation's file path. Always give it; null only for absence.",
     )
     start_line: int | None = Field(
-        description="First cited line. Always give it, even for one line; null only for absence."
+        default=None,
+        description="First cited line. Always give it, even for one line; null only for absence.",
     )
     end_line: int | None = Field(
-        description="Last cited line (the same as start_line for one line); null only for absence."
+        default=None,
+        description="Last cited line (the same as start_line for one line); null only for absence.",
     )
     note: str = Field(description="Why this item supports the claim.")
 
@@ -111,7 +134,7 @@ def check_evidence(
         if observation is None:
             check.errors.append(f"{label}: no observation with that id was shown to you")
             continue
-        item, problem = _verify(ref, observation, workspace)
+        item, problem = _verify(ref, observation, workspace, ledger)
         if problem is not None:
             check.errors.append(f"{label}: {problem}")
         elif item is not None:
@@ -122,29 +145,34 @@ def check_evidence(
 
 
 def _verify(
-    ref: EvidenceRef, observation: Observation, workspace: Workspace
+    ref: EvidenceRef, observation: Observation, workspace: Workspace, ledger: ObservationLedger
 ) -> tuple[Evidence | None, str | None]:
     observation_id = ref.observation_id.strip()
     if ref.role is EvidenceRole.ABSENCE:
-        if observation.kind != "search" or observation.match_count != 0:
-            return None, "absence evidence must cite a search that found no matches"
+        if observation.kind != "search":
+            return None, (
+                f"absence evidence must cite a search, but {observation_id} shows lines; "
+                "cite a search that found no matches, or cite these lines as context"
+            )
+        if observation.match_count != 0:
+            return None, _positive_search(observation_id, observation, ledger, "absence")
         return (
             Evidence(
                 role=ref.role, observation_id=observation_id, note=ref.note, query=observation.query
             ),
             None,
         )
+    if observation.kind == "search":
+        return None, _positive_search(observation_id, observation, ledger, ref.role.value)
     if observation.kind != "lines" or observation.path is None:
-        return None, f"{ref.role.value} evidence must cite lines a tool showed, not a search"
+        return None, f"{ref.role.value} evidence must cite lines a tool showed"
     assert observation.start_line is not None and observation.end_line is not None
     if ref.path is None or ref.start_line is None or ref.end_line is None:
         fields = (("path", ref.path), ("start_line", ref.start_line), ("end_line", ref.end_line))
         missing = [name for name, value in fields if value is None]
         verb = "is" if len(missing) == 1 else "are"
-        return None, (
-            f"{' and '.join(missing)} {verb} missing; "
-            "line evidence needs path, start_line and end_line"
-        )
+        names = missing[0] if len(missing) == 1 else f"{', '.join(missing[:-1])} and {missing[-1]}"
+        return None, (f"{names} {verb} missing; line evidence needs path, start_line and end_line")
     try:
         path = str(validate_relative_path(ref.path))
     except ToolError as exc:
@@ -209,3 +237,29 @@ def _check_defect_sites(refs: list[EvidenceRef], check: EvidenceCheck, diff: Par
             check.anchor = Anchor(
                 path=file.path, side=side, start_line=item.start_line, end_line=item.end_line
             )
+
+
+def _positive_search(
+    observation_id: str, search: Observation, ledger: ObservationLedger, role: str
+) -> str:
+    """Why a search that found something can't back this item, and what to cite instead."""
+    found = search.match_count or 0
+    lines = ledger.lines_of_search(observation_id)
+    shown = f" ({', '.join(lines)})" if lines else ""
+    if role == "absence":
+        head = (
+            f"absence evidence must cite a search that found no matches, but {observation_id} "
+            f"({search.query}) found {found}"
+        )
+        advice = (
+            f"to cite the code it found, use its line observations{shown} as context evidence; "
+            "to show that nothing does something, run a search for that and cite it only if it "
+            "found nothing"
+        )
+    else:
+        head = (
+            f"{role} evidence must cite lines a tool showed, but {observation_id} is a search "
+            f"({found} {'match' if found == 1 else 'matches'})"
+        )
+        advice = f"cite the lines it listed instead{shown}"
+    return f"{head}; {advice}"

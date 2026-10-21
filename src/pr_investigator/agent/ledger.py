@@ -26,6 +26,20 @@ class ObservationLedger:
     def get(self, observation_id: str) -> Observation | None:
         return self._observations.get(observation_id.strip())
 
+    def lines_of_search(self, search_id: str, limit: int = 6) -> list[str]:
+        """Ids of the line observations recorded right after a search: the code it found."""
+        ids = list(self._observations)
+        try:
+            start = ids.index(search_id.strip()) + 1
+        except ValueError:
+            return []
+        found: list[str] = []
+        for observation_id in ids[start:]:
+            if self._observations[observation_id].kind != "lines":
+                break
+            found.append(observation_id)
+        return found[:limit]
+
     def items(self) -> list[tuple[str, Observation]]:
         return list(self._observations.items())
 

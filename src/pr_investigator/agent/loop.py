@@ -84,12 +84,23 @@ class TerminalTool[T](Protocol):
     def check(self, arguments: dict[str, Any], ledger: ObservationLedger) -> Submission[T]: ...
 
 
+def _where(loc: tuple[int | str, ...]) -> str:
+    """A field path a model can act on. List positions are 1-based, as in the evidence
+    check's own messages: "evidence item 2.start_line", not "evidence.1.start_line"."""
+    names: list[str] = []
+    for part in loc:
+        if isinstance(part, int) and names:
+            names[-1] += f" item {part + 1}"
+        else:
+            names.append(str(part))
+    return ".".join(names) or "arguments"
+
+
 def validation_problems(exc: ValidationError) -> list[str]:
     """A terminal tool's argument errors, one line per field, for the model to fix."""
     errors = exc.errors()
     problems = [
-        f"{'.'.join(str(part) for part in error['loc']) or 'arguments'}: {error['msg']}"
-        for error in errors[:MAX_VALIDATION_PROBLEMS]
+        f"{_where(error['loc'])}: {error['msg']}" for error in errors[:MAX_VALIDATION_PROBLEMS]
     ]
     if len(errors) > MAX_VALIDATION_PROBLEMS:
         problems.append(f"and {len(errors) - MAX_VALIDATION_PROBLEMS} more problems")

@@ -234,13 +234,22 @@ def test_absence_and_line_evidence_need_the_right_kind_of_observation(
         cite(search_with_matches, CONTEXT, "app/service.py", 2, 2),
         require_defect_site=False,
     )
-    assert check.errors == [
+    first, second, third = check.errors
+    hint = f"({line_hit})"  # the one line the search showed
+    assert first.startswith(
         f"evidence 1 ({search_with_matches}): absence evidence must cite a search that found no "
-        "matches",
-        f"evidence 2 ({line_hit}): absence evidence must cite a search that found no matches",
+        f"matches, but {search_with_matches} (literal 'check(user)') found 1; "
+        f"to cite the code it found, use its line observations {hint} as context evidence"
+    )
+    assert second == (
+        f"evidence 2 ({line_hit}): absence evidence must cite a search, but {line_hit} shows "
+        "lines; cite a search that found no matches, or cite these lines as context"
+    )
+    assert third == (
         f"evidence 3 ({search_with_matches}): context evidence must cite lines a tool showed, "
-        "not a search",
-    ]
+        f"but {search_with_matches} is a search (1 match); cite the lines it listed instead "
+        f"{hint}"
+    )
 
 
 def test_one_end_of_a_range_cites_that_line(inv: Investigation) -> None:

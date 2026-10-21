@@ -487,7 +487,7 @@ async def test_enum_values_are_matched_case_insensitively_but_never_invented(run
     unknown = verdict("confirmed", cite("O1", "bug_site"))
     result, _ = await run([reply(submit("s", unknown))], max_turns=1)
     (errors,) = result.rejections
-    assert errors[0].startswith("evidence.0.role: Input should be 'defect_site'")
+    assert errors[0].startswith("evidence item 1.role: Input should be 'defect_site'")
 
 
 async def test_one_end_of_a_line_range_cites_that_single_line(run: Run) -> None:
