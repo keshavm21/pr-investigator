@@ -579,7 +579,7 @@ async def test_run_reviewer_checks_the_toolset(pr: Setup) -> None:
             max_diff_chars=1000,
             toolset=Toolset.STRUCTURAL,
         )
-    with pytest.raises(ConfigError, match="needs an index file"):
+    with pytest.raises(ConfigError, match="need an index file"):
         await run_reviewer(
             Reviewer.A1,
             target,

@@ -41,6 +41,14 @@ ProviderOpt = Annotated[
 ModelOpt = Annotated[str | None, typer.Option("--model", help="Model (overrides PRI_LLM_MODEL).")]
 CasesOpt = Annotated[Path, typer.Option("--cases-dir", help="Directory of case manifests.")]
 SplitOpt = Annotated[str, typer.Option("--split", help="Which cases: dev, test (held out) or all.")]
+ContextOpt = Annotated[
+    bool,
+    typer.Option(
+        "--context",
+        help="a1: add the context pack (callers, callees, tests of changed functions) and "
+        "mechanical leads to the opening message.",
+    ),
+]
 ToolsOpt = Annotated[
     Toolset,
     typer.Option(
@@ -88,10 +96,12 @@ def review(
         typer.Option(
             "--reviewer",
             help="a2 (default): planner, then one investigation per suspect. a1: one agent "
-            "loop over the whole PR. b0: one call on the diff (the Phase 1 baseline).",
+            "loop over the whole PR. b0: one call on the diff (the Phase 1 baseline). b1: "
+            "one call on the diff plus the context pack and leads.",
         ),
     ] = Reviewer.A2,
     tools: ToolsOpt = Toolset.BASE,
+    context: ContextOpt = False,
     max_requests: Annotated[
         int, typer.Option(min=1, help="Cap on real provider requests (cache hits are free).")
     ] = 30,
@@ -101,14 +111,16 @@ def review(
     run_dir: Path | None = None
     try:
         settings = _settings(provider, model)
-        check_toolset(reviewer, tools)
+        check_toolset(reviewer, tools, context)
         client = build_client(settings, budget=RequestBudget(max_requests))
         review_target, workspace = _ingest(
             target, base, head, title, description, data_class, client, settings
         )
         run_dir = create_run_dir(settings.runs_dir)
         result = asyncio.run(
-            _run_reviewer(reviewer, tools, review_target, workspace, client, settings, run_dir)
+            _run_reviewer(
+                reviewer, tools, context, review_target, workspace, client, settings, run_dir
+            )
         )
         save_run(result, run_dir)
     except PRIError as exc:
@@ -127,6 +139,7 @@ def review(
 async def _run_reviewer(
     reviewer: Reviewer,
     tools: Toolset,
+    context: bool,
     target: ReviewTarget,
     workspace: Workspace,
     client: LLMClient,
@@ -144,6 +157,7 @@ async def _run_reviewer(
             trace=trace,
             toolset=tools,
             index_db=settings.index_db,
+            context=context,
         )
 
 
@@ -282,24 +296,25 @@ def eval_run(
     provider: ProviderOpt = None,
     model: ModelOpt = None,
     reviewer: Annotated[
-        Reviewer, typer.Option("--reviewer", help="Which reviewer to evaluate: b0, a2 or a1.")
+        Reviewer, typer.Option("--reviewer", help="Which reviewer to evaluate: b0, b1, a2 or a1.")
     ] = Reviewer.B0,
     traces: Annotated[
         bool, typer.Option(help="Write a trace per case to <results>/traces (a1 and a2 only).")
     ] = True,
     split: SplitOpt = "all",
     tools: ToolsOpt = Toolset.BASE,
+    context: ContextOpt = False,
 ) -> None:
     """Run a reviewer over the evaluation cases and score it."""
     try:
         settings = _settings(provider, model)
-        check_toolset(reviewer, tools)
+        check_toolset(reviewer, tools, context)
         cases = load_cases(cases_dir, only=case, split=split)
         budget = RequestBudget(max_requests)
         client = build_client(settings, budget=budget)
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         safe_model = client.model.replace("/", "_")
-        suffix = "" if tools is Toolset.BASE else f"-{tools.value}"
+        suffix = ("" if tools is Toolset.BASE else f"-{tools.value}") + ("-ctx" if context else "")
         out_dir = output or Path("evals/results") / f"{stamp}-{reviewer.value}{suffix}-{safe_model}"
         info, scores, summary = asyncio.run(
             run_eval(
@@ -315,6 +330,7 @@ def eval_run(
                 split=split,
                 toolset=tools,
                 index_db=settings.index_db,
+                context=context,
             )
         )
     except PRIError as exc:

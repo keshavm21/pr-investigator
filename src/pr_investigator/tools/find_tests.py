@@ -69,12 +69,11 @@ class FindTests:
     ) -> ToolResult:
         name = symbol.rsplit(".", 1)[-1]
         refs = [(p, r) for p, r in index.references(args.ref, name) if is_test_file(p)]
+        # Module-level uses (no test) sort first in each file.
+        refs.sort(key=lambda item: (item[0], _test_of(item[1].scope) or "", item[1].line))
         groups = [
             (key, sorted({r.line for _, r in group}))
-            for key, group in groupby(
-                sorted(refs, key=lambda item: (item[0], _test_of(item[1].scope), item[1].line)),
-                key=lambda item: (item[0], _test_of(item[1].scope)),
-            )
+            for key, group in groupby(refs, key=lambda item: (item[0], _test_of(item[1].scope)))
         ]
         query = f"tests mentioning {name!r} ({args.ref})"
         search = search_observation(self.name, args.ref, query, len(groups))

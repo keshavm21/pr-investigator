@@ -1,0 +1,96 @@
+{
+  "run": {
+    "reviewer": "a2",
+    "started_at": "2026-10-19T08:28:40+00:00",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "judge": "location-only",
+    "samples": 1,
+    "tolerance": 3,
+    "review_prompt": "planner.v1, investigator.v5, agent_loop.v2",
+    "cases": [
+      "clean-extract-rows-helper",
+      "clean-health-endpoint",
+      "clean-inventory-shared-int-parsing",
+      "clean-werkzeug-plain-int-docs",
+      "decoy-admin-router-auth",
+      "decoy-allowlisted-sort",
+      "decoy-inventory-require-role-only",
+      "decoy-werkzeug-debugger-resource-cache",
+      "seeded-broken-caller-signature",
+      "seeded-inventory-uncapped-limit",
+      "seeded-missing-authorization",
+      "seeded-none-dereference",
+      "seeded-off-by-one-pagination",
+      "seeded-path-traversal-attachments",
+      "seeded-sql-injection-search",
+      "seeded-werkzeug-gen-salt-random",
+      "seeded-werkzeug-header-newlines",
+      "seeded-werkzeug-input-stream-fallback",
+      "seeded-werkzeug-redirect-escape"
+    ],
+    "stopped_early": null,
+    "prompts": {
+      "planner.v1": "b318b414f15106d48d31b18ef75cda23e26155791619440a882c7260d981085a",
+      "investigator.v5": "ba848b18f3fc423ed584628456adb1729d76d42d36af4141b4989249441a5862",
+      "agent_loop.v2": "b63bdbfd567685d38031383a63bf9e136d2d33e30ef13db06465d8d2e6cb8900"
+    },
+    "budget": {
+      "max_suspects": 4,
+      "investigation_turns": 6,
+      "single_agent_turns": 12,
+      "max_tool_calls_per_turn": 3,
+      "max_tool_output_chars": 4000,
+      "investigation_diff_chars": 8000,
+      "single_agent_diff_chars": 24000,
+      "max_findings": 4
+    },
+    "code_commit": "decfa6e0c6e7ec1fe05e54c0c74af60bf22a71bf",
+    "code_dirty": true,
+    "provider_requests": 98,
+    "split": "dev",
+    "toolset": "structural"
+  },
+  "summary": {
+    "runs": 19,
+    "failed_runs": 0,
+    "findings": 11,
+    "true_positives": 8,
+    "partial_matches": 0,
+    "false_positives": 3,
+    "expected_issues": 11,
+    "precision": 0.7272727272727273,
+    "recall": 0.7272727272727273,
+    "f0_5": 0.7272727272727274,
+    "false_positives_per_clean_run": 0.0,
+    "decoy_trigger_rate": 0.25,
+    "anchor_in_diff_rate": 1.0,
+    "exact_location_rate": 0.875,
+    "input_tokens": 520593,
+    "output_tokens": 13691,
+    "cached_runs": 0,
+    "requests": 108,
+    "cached_requests": 10,
+    "requests_per_run": 5.684210526315789,
+    "max_requests_per_run": 10,
+    "agent": {
+      "suspects": 19,
+      "dropped_suspects": 0,
+      "outcomes": {
+        "refuted": 6,
+        "confirmed": 11,
+        "inconclusive": 2
+      },
+      "stop_causes": {
+        "submitted": 17,
+        "turn_budget": 2
+      },
+      "turns": 89,
+      "tool_calls": 71,
+      "rejections": 5,
+      "duplicates": 0,
+      "retries": 0
+    },
+    "verified_evidence_rate": 1.0
+  }
+}

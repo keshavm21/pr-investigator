@@ -8,7 +8,7 @@
 >
 > When a decision changes, update its row and the affected docs.
 >
-> Last updated: 2026-10-19. **There is no budget for paid API calls:** development and evaluation use free tiers only.
+> Last updated: 2026-10-21. **There is no budget for paid API calls:** development and evaluation use free tiers only.
 
 ## Accepted
 
@@ -32,10 +32,10 @@
 
 | ID | Decision | Status | Recommendation | Alternatives and tradeoffs |
 |---|---|---|---|---|
-| D8 | Retrieval strategy | Deferred (Phase 3, conditional) | **Lexical and structural retrieval first.** Semantic retrieval (hybrid, merged with RRF) is built only if the Phase 3 ablations show misses that search and structure can't solve. | Grep and structural only (simpler; recent research supports it for agents). |
-| D9 | Embedding model | Deferred (with D8) | **A local open-weight embedding model** (free, and code stays on your machine), if D8 needs one | A free embedding API, such as Gemini's free tier, is less setup but has quotas and may use data for training. Voyage's code model is paid. |
+| D8 | Retrieval strategy | Deferred (Phase 3, conditional) | **Lexical and structural retrieval first.** Semantic retrieval (hybrid, merged with RRF) is built only if the Phase 3 ablations show misses that search and structure can't solve. | Grep and structural only (simpler; recent research supports it for agents). Phase 3 ablation (2026-10-21): not built. The agents' misses are judgment failures, not missing context, so retrieval can't fix them ([results](../evals/results/README.md#phase-3-ablation-on-the-test-split)). |
+| D9 | Embedding model | Deferred (with D8) | **A local open-weight embedding model** (free, and code stays on your machine), if D8 needs one | A free embedding API, such as Gemini's free tier, is less setup but has quotas and may use data for training. Voyage's code model is paid. Phase 3 ablation (2026-10-21): not needed, since D8 wasn't built. |
 | D11 | Job queue | Proposed | **procrastinate** (Postgres-backed) | arq or RQ (need Redis), Celery (heavy), Temporal or DBOS (more concepts than needed). |
-| D12 | Static analyzer | Deferred (Phase 3, conditional) | **tree-sitter risk signals first**; spike **Semgrep CE** and **Opengrep** only if those prove too crude | Semgrep CE taint analysis is single-file and mostly intra-procedural. Opengrep is an LGPL fork that restores inter-procedural taint. Semgrep's registry rules are licensed for internal, non-SaaS use. |
+| D12 | Static analyzer | Deferred (Phase 3, conditional) | **tree-sitter risk signals first**; spike **Semgrep CE** and **Opengrep** only if those prove too crude | Semgrep CE taint analysis is single-file and mostly intra-procedural. Opengrep is an LGPL fork that restores inter-procedural taint. Semgrep's registry rules are licensed for internal, non-SaaS use. Phase 3 (2026-10-21): the tree-sitter signals shipped as leads (hidden Unicode, instruction-file edits, risky calls, removed guards) inside the context pack. No Semgrep/Opengrep spike: the ablation showed no need. |
 | D13 | Review UI technology | Open | **FastAPI with Jinja2 and HTMX** | A React SPA shows off more frontend skill, at the cost of a second language and a build pipeline. |
 | D14 | GitHub integration | Proposed | **GitHub App**, with a personal token for local development only | A GitHub Action needs no server, but human review needs a UI anyway, and fork-PR secrets are risky. |
 | D15 | Identity of posted comments | Open | **Post as the App**, with "approved by @reviewer" in the footer | Posting as the approving user gives the human ownership but obscures that the comment was AI-generated. |

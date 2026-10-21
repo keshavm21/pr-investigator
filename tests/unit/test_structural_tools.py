@@ -188,6 +188,16 @@ def test_find_tests_by_symbol_groups_by_test(ctx: ToolContext) -> None:
     assert_exact_observations(ctx, result)
 
 
+def test_find_tests_by_symbol_mixes_module_level_and_test_uses(ctx: ToolContext) -> None:
+    result = call(ctx, "find_tests", symbol="get_user")  # imported, then used in a test
+    assert not result.is_error, result.content
+    content = result.content
+    assert content.index("tests/test_service.py, module level:") < content.index(
+        "tests/test_service.py, test test_get_user:"
+    )
+    assert_exact_observations(ctx, result)
+
+
 def test_find_tests_by_module_follows_imports(ctx: ToolContext) -> None:
     service = call(ctx, "find_tests", path="app/service.py")
     assert "tests/test_service.py imports it:" in service.content

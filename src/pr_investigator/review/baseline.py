@@ -26,6 +26,7 @@ from pr_investigator.llm.types import Effort, LLMRequest, Message, Usage
 
 STAGE = "baseline_review"
 PROMPT_NAME, PROMPT_VERSION = "baseline_review", 1
+CONTEXT_PROMPT_VERSION = 2  # B1: v1 plus a description of the context pack and leads
 REVIEWER = "b0"
 
 # Files a human reviewer would skip too. Phase 1 uses name patterns only.
@@ -131,9 +132,15 @@ def untrusted(label: str, content: str) -> str:
 
 
 def build_request(
-    target: ReviewTarget, diff: ParsedDiff, *, max_diff_chars: int, sample: int = 0
+    target: ReviewTarget,
+    diff: ParsedDiff,
+    *,
+    max_diff_chars: int,
+    sample: int = 0,
+    context: str | None = None,
 ) -> tuple[LLMRequest, Coverage]:
-    prompt = load_prompt(PROMPT_NAME, PROMPT_VERSION)
+    """The B0 request, or B1's when `context` (a pack and leads, already rendered) is given."""
+    prompt = load_prompt(PROMPT_NAME, CONTEXT_PROMPT_VERSION if context else PROMPT_VERSION)
     diff_text, coverage = render_diff(diff, max_diff_chars)
     metadata = f"Title: {target.title}\n\nDescription:\n{target.description or '(none)'}"
     lines = [
@@ -147,6 +154,8 @@ def build_request(
         lines.append("Not shown:")
         lines += [f"- {path} ({reason})" for path, reason in coverage.skipped.items()]
     lines += ["", untrusted("diff", diff_text)]
+    if context:
+        lines += ["", context]
     request = LLMRequest(
         stage=STAGE,
         data_class=target.data_class,
@@ -166,10 +175,14 @@ async def review_baseline(
     *,
     max_diff_chars: int,
     sample: int = 0,
+    context: str | None = None,
 ) -> ReviewResult:
-    prompt = load_prompt(PROMPT_NAME, PROMPT_VERSION)
-    request, coverage = build_request(target, diff, max_diff_chars=max_diff_chars, sample=sample)
+    prompt = load_prompt(PROMPT_NAME, CONTEXT_PROMPT_VERSION if context else PROMPT_VERSION)
+    request, coverage = build_request(
+        target, diff, max_diff_chars=max_diff_chars, sample=sample, context=context
+    )
     result = ReviewResult(
+        reviewer="b1" if context else REVIEWER,
         target=target,
         summary="No reviewable changes.",
         findings=[],

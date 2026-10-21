@@ -95,6 +95,7 @@ class AgentReview(BaseModel):
     prompts: dict[str, str] = Field(description="prompt id -> sha256 of its text")
     budget: AgentBudget
     toolset: Toolset = Toolset.BASE
+    context: bool = False  # the opening message carried a context pack and leads
     suspects: list[Suspect] = Field(default_factory=list)
     dropped_suspects: list[DroppedSuspect] = Field(default_factory=list)
     investigations: list[Investigation] = Field(default_factory=list)
@@ -115,6 +116,7 @@ def emit_run_start(
     budget: AgentBudget,
     prompts: tuple[Prompt, ...],
     toolset: Toolset = Toolset.BASE,
+    context: bool = False,
 ) -> None:
     trace.emit(
         "run_start",
@@ -125,6 +127,7 @@ def emit_run_start(
         budget=budget,
         prompts={p.id: p.sha256 for p in prompts},
         toolset=toolset,
+        context=context,
     )
 
 

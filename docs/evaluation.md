@@ -124,6 +124,8 @@ The judge runs on the configured free model. A judge from a different model fami
 
 Effort levels and, if D3 allows, cheaper models per stage are tested as further variants.
 
+B1 (one call, diff plus the context pack and leads) and `--context` for A1 are implemented; their test-split results are in [the results](../evals/results/README.md#phase-3-ablation-on-the-test-split).
+
 Phase 3 adds a tool dimension to A1 and A2: `--tools base` (the Phase 1 tools) or `--tools structural` (plus the tree-sitter index tools). The run summary records which one was used.
 
 ### 2.5 Statistics

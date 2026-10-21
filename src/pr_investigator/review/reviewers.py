@@ -18,11 +18,13 @@ from pr_investigator.index.store import RepoIndex
 from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.prompts import Prompt, load_prompt
 from pr_investigator.review.baseline import (
+    CONTEXT_PROMPT_VERSION,
     PROMPT_NAME,
     PROMPT_VERSION,
     ReviewResult,
     review_baseline,
 )
+from pr_investigator.review.context import render_context
 from pr_investigator.tools import Toolset
 from pr_investigator.trace import Trace
 from pr_investigator.workspace import Workspace
@@ -32,12 +34,13 @@ AnyReview = ReviewResult | AgentReview
 
 class Reviewer(StrEnum):
     B0 = "b0"
+    B1 = "b1"  # B0 plus the deterministic context pack and leads
     A1 = "a1"
     A2 = "a2"
 
     @property
     def agentic(self) -> bool:
-        return self is not Reviewer.B0
+        return self in (Reviewer.A1, Reviewer.A2)
 
 
 def reviewer_prompts(reviewer: Reviewer, toolset: Toolset = Toolset.BASE) -> tuple[Prompt, ...]:
@@ -45,12 +48,16 @@ def reviewer_prompts(reviewer: Reviewer, toolset: Toolset = Toolset.BASE) -> tup
         return a2_prompts(toolset)
     if reviewer is Reviewer.A1:
         return a1_prompts(toolset)
+    if reviewer is Reviewer.B1:
+        return (load_prompt(PROMPT_NAME, CONTEXT_PROMPT_VERSION),)
     return (load_prompt(PROMPT_NAME, PROMPT_VERSION),)
 
 
-def check_toolset(reviewer: Reviewer, toolset: Toolset) -> None:
+def check_toolset(reviewer: Reviewer, toolset: Toolset, context: bool = False) -> None:
     if toolset is not Toolset.BASE and not reviewer.agentic:
         raise ConfigError(f"{reviewer.value} uses no tools; --tools applies to a1 and a2 only")
+    if context and reviewer not in (Reviewer.A1, Reviewer.B1):
+        raise ConfigError("--context applies to a1 (b1 always has it)")
 
 
 async def run_reviewer(
@@ -66,22 +73,33 @@ async def run_reviewer(
     trace: Trace | None = None,
     toolset: Toolset = Toolset.BASE,
     index_db: Path | None = None,
+    context: bool = False,
 ) -> AnyReview:
     """Run one review. B0 ignores `budget` and `trace`: it makes a single call.
 
     The structural toolset needs `index_db`, the SQLite file of the structural index.
     """
-    check_toolset(reviewer, toolset)
+    check_toolset(reviewer, toolset, context)
     if reviewer is Reviewer.B0:
         return await review_baseline(
             target, diff, client, max_diff_chars=max_diff_chars, sample=sample
         )
     index = None
-    if toolset is Toolset.STRUCTURAL:
+    if toolset is Toolset.STRUCTURAL or context or reviewer is Reviewer.B1:
         if index_db is None:
-            raise ConfigError("the structural toolset needs an index file")
+            raise ConfigError("the structural toolset and the context need an index file")
         index = RepoIndex(index_db, workspace)
     try:
+        if reviewer is Reviewer.B1:
+            assert index is not None
+            return await review_baseline(
+                target,
+                diff,
+                client,
+                max_diff_chars=max_diff_chars,
+                sample=sample,
+                context=render_context(workspace, diff, index) or None,
+            )
         if reviewer is Reviewer.A2:
             return await review_a2(
                 target,
@@ -105,6 +123,7 @@ async def run_reviewer(
             trace=trace,
             toolset=toolset,
             index=index,
+            context=context,
         )
     finally:
         if index is not None:

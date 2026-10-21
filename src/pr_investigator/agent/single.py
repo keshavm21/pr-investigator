@@ -30,6 +30,7 @@ from pr_investigator.llm.client import LLMClient
 from pr_investigator.llm.prompts import Prompt, load_prompt
 from pr_investigator.llm.types import Effort, ToolSpec
 from pr_investigator.review.baseline import Coverage, render_diff, untrusted
+from pr_investigator.review.context import build_context_pack, find_leads
 from pr_investigator.tools import Observation, Toolset
 from pr_investigator.tools.get_diff import file_observations
 from pr_investigator.trace import Trace, errors_traced
@@ -145,14 +146,17 @@ async def review_a1(
     trace: Trace | None = None,
     toolset: Toolset = Toolset.BASE,
     index: RepoIndex | None = None,
+    context: bool = False,
 ) -> AgentReview:
     budget = budget or AgentBudget()
     trace = trace or Trace()
     prompts = a1_prompts(toolset)
-    emit_run_start(trace, REVIEWER, target, client.provider, client.model, budget, prompts, toolset)
+    emit_run_start(
+        trace, REVIEWER, target, client.provider, client.model, budget, prompts, toolset, context
+    )
     with errors_traced(trace):
         review = await _review_a1(
-            target, workspace, diff, client, budget, sample, trace, prompts, toolset, index
+            target, workspace, diff, client, budget, sample, trace, prompts, toolset, index, context
         )
     emit_run_end(trace, review)
     return review
@@ -169,6 +173,7 @@ async def _review_a1(
     prompts: tuple[Prompt, ...],
     toolset: Toolset,
     index: RepoIndex | None,
+    context: bool,
 ) -> AgentReview:
     started = time.monotonic()
     config = LoopConfig(
@@ -191,7 +196,7 @@ async def _review_a1(
         index=index,
         trace=trace.scoped("review"),
     )
-    opening, coverage = single_agent_opening(loop, target, budget)
+    opening, coverage = single_agent_opening(loop, target, budget, with_context=context)
     review = AgentReview(
         reviewer=REVIEWER,
         target=target,
@@ -203,6 +208,7 @@ async def _review_a1(
         prompts={p.id: p.sha256 for p in prompts},
         budget=budget,
         toolset=toolset,
+        context=context,
     )
     if not coverage.reviewed:
         return review  # nothing to show, so spend no quota
@@ -240,7 +246,11 @@ async def _review_a1(
 
 
 def single_agent_opening(
-    loop: AgentLoop[CheckedReport], target: ReviewTarget, budget: AgentBudget
+    loop: AgentLoop[CheckedReport],
+    target: ReviewTarget,
+    budget: AgentBudget,
+    *,
+    with_context: bool = False,
 ) -> tuple[str, Coverage]:
     diff = loop.ctx.diff
     diff_text, coverage = render_diff(diff, budget.single_agent_diff_chars)
@@ -267,4 +277,29 @@ def single_agent_opening(
         "",
         loop.present("diff", diff_text, observations),
     ]
+    if with_context and loop.ctx.index is not None:
+        lines += _context_lines(loop)
     return "\n".join(lines), coverage
+
+
+def _context_lines(loop: AgentLoop[CheckedReport]) -> list[str]:
+    index = loop.ctx.index
+    assert index is not None
+    pack = build_context_pack(loop.ctx.workspace, loop.ctx.diff, index)
+    leads = find_leads(loop.ctx.diff, index)
+    lines: list[str] = []
+    if pack.text:
+        lines += [
+            "",
+            "Context computed from the repository index for the Python functions this PR "
+            "changes (callers, callees and tests are matched by name):",
+            loop.present("context", pack.text, pack.observations),
+        ]
+    if leads:
+        lines += [
+            "",
+            "Mechanical leads from scanning the diff. They are suspicions, not findings: check "
+            "each with your tools, and mention in your summary any you dismissed.",
+            untrusted("leads", "\n".join(f"- {printable(lead)}" for lead in leads)),
+        ]
+    return lines

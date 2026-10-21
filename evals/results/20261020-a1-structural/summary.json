@@ -1,0 +1,87 @@
+{
+  "run": {
+    "reviewer": "a1",
+    "started_at": "2026-10-20T18:51:41+00:00",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "judge": "location-only",
+    "samples": 2,
+    "tolerance": 3,
+    "review_prompt": "single_agent.v5, agent_loop.v2",
+    "cases": [
+      "clean-werkzeug-content-type-helper",
+      "clean-werkzeug-range-to-header",
+      "decoy-inventory-export-write",
+      "decoy-werkzeug-proxy-fix-logging",
+      "decoy-werkzeug-send-static",
+      "seeded-inventory-cancel-order",
+      "seeded-inventory-set-role",
+      "seeded-inventory-update-price-convention",
+      "seeded-werkzeug-content-range-off-by-one",
+      "seeded-werkzeug-debugger-pin-check",
+      "seeded-werkzeug-number-converter-rename",
+      "seeded-werkzeug-password-compare",
+      "seeded-werkzeug-proxy-fix-client-ip",
+      "seeded-werkzeug-safe-join-dotdot",
+      "seeded-werkzeug-uuid-converter"
+    ],
+    "stopped_early": null,
+    "prompts": {
+      "single_agent.v5": "08661f4dbadd05109af62536aba6bd9991091e76afe1948f957d9b6c6be50d83",
+      "agent_loop.v2": "b63bdbfd567685d38031383a63bf9e136d2d33e30ef13db06465d8d2e6cb8900"
+    },
+    "budget": {
+      "max_suspects": 4,
+      "investigation_turns": 6,
+      "single_agent_turns": 12,
+      "max_tool_calls_per_turn": 3,
+      "max_tool_output_chars": 4000,
+      "investigation_diff_chars": 8000,
+      "single_agent_diff_chars": 24000,
+      "max_findings": 4
+    },
+    "code_commit": "decfa6e0c6e7ec1fe05e54c0c74af60bf22a71bf",
+    "code_dirty": true,
+    "provider_requests": 179,
+    "split": "test",
+    "toolset": "structural",
+    "context": false
+  },
+  "summary": {
+    "runs": 30,
+    "failed_runs": 0,
+    "findings": 8,
+    "true_positives": 7,
+    "partial_matches": 0,
+    "false_positives": 1,
+    "expected_issues": 26,
+    "precision": 0.875,
+    "recall": 0.2692307692307692,
+    "f0_5": 0.603448275862069,
+    "false_positives_per_clean_run": 0.0,
+    "decoy_trigger_rate": 0.0,
+    "anchor_in_diff_rate": 1.0,
+    "exact_location_rate": 0.8571428571428571,
+    "input_tokens": 1043704,
+    "output_tokens": 9340,
+    "cached_runs": 0,
+    "requests": 171,
+    "cached_requests": 0,
+    "requests_per_run": 5.7,
+    "max_requests_per_run": 12,
+    "agent": {
+      "suspects": 0,
+      "dropped_suspects": 0,
+      "outcomes": {},
+      "stop_causes": {
+        "submitted": 30
+      },
+      "turns": 171,
+      "tool_calls": 139,
+      "rejections": 2,
+      "duplicates": 0,
+      "retries": 8
+    },
+    "verified_evidence_rate": 1.0
+  }
+}

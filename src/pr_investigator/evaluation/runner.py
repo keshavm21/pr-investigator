@@ -65,6 +65,7 @@ class EvalRunInfo(BaseModel):
     provider_requests: int | None = None  # real provider calls, retries and judge included
     split: str = "all"  # which cases: dev, test or all
     toolset: str = "base"  # the agent's tools (a1 and a2)
+    context: bool = False  # a1: context pack and leads in the opening message
 
 
 def has_code_changes(porcelain: str) -> bool:
@@ -141,9 +142,10 @@ async def run_eval(
     split: str = "all",
     toolset: Toolset = Toolset.BASE,
     index_db: Path | None = None,
+    context: bool = False,
 ) -> tuple[EvalRunInfo, list[CaseScore], Summary]:
     say = progress or (lambda _message: None)
-    check_toolset(reviewer, toolset)
+    check_toolset(reviewer, toolset, context)
     budget = (budget or AgentBudget()) if reviewer.agentic else None
     prompts = reviewer_prompts(reviewer, toolset)
     commit, dirty = code_version()
@@ -163,6 +165,7 @@ async def run_eval(
         code_dirty=dirty,
         split=split,
         toolset=toolset.value,
+        context=context,
     )
     if traces_dir is not None and reviewer.agentic:
         traces_dir.mkdir(parents=True, exist_ok=True)
@@ -203,6 +206,7 @@ async def run_eval(
                             trace=trace,
                             toolset=toolset,
                             index_db=index_db,
+                            context=context,
                         )
                     requests, cached_requests = request_counts(result)
                     matches, judge_usage = await match(
@@ -282,8 +286,10 @@ def render_summary(info: EvalRunInfo, scores: list[CaseScore], summary: Summary)
         f"- Cases: {len(info.cases)} (split: {info.split}); samples per case: {info.samples}; "
         f"location tolerance: ±{info.tolerance} lines",
     ]
-    if info.reviewer != "b0":
-        lines.append(f"- Tools: {info.toolset}")
+    if info.reviewer in ("a1", "a2"):
+        lines.append(
+            f"- Tools: {info.toolset}; context pack and leads: {'on' if info.context else 'off'}"
+        )
     if info.code_commit:
         dirty = " with uncommitted changes" if info.code_dirty else ""
         lines.append(f"- Code: commit `{info.code_commit[:12]}`{dirty}")
