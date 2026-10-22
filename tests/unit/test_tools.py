@@ -137,3 +137,22 @@ def test_registry_validates_arguments_and_names(ctx: ToolContext) -> None:
     specs = {spec.name: spec for spec in tool_specs()}
     assert set(specs) == {t.name for t in READ_ONLY_TOOLS}
     assert specs["read_file"].parameters["properties"]["path"]["type"] == "string"
+
+
+def test_search_code_cuts_at_max_results_in_sorted_order_whatever_rg_printed() -> None:
+    import json
+
+    from pr_investigator.tools.search_code import SearchCode, SearchCodeArgs
+
+    def event(path: str, line: int) -> bytes:
+        data = {"path": {"text": path}, "lines": {"text": "hit\n"}, "line_number": line}
+        return json.dumps({"type": "match", "data": data}).encode()
+
+    events = [event("b.py", 3), event("a.py", 9), event("a.py", 2), event("c.py", 1)]
+    args = SearchCodeArgs(pattern="hit", max_results=2, context_lines=0)
+    tool = SearchCode()
+    first = tool._format(args, b"\n".join(events), 4000)
+    second = tool._format(args, b"\n".join(reversed(events)), 4000)
+    assert first.content == second.content
+    assert first.observations == second.observations
+    assert "a.py" in first.content and "c.py" not in first.content

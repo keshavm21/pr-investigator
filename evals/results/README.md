@@ -291,3 +291,5 @@ Five configurations on the 15 held-out test cases (13 seeded issues, so 39 issue
 5. **A1 is dominated**: lowest recall, highest cost per true positive. The planner in A2 is what helps, as in Phase 2.
 
 **Decision.** No change to defaults: A2 stays the default for recall, B1 is the recommended cheap mode. The security results are in [security.md](security.md).
+
+**After these runs (D28):** `search_code` now sorts matches before cutting at `max_results`. The Phase 7 numbers above were produced with the earlier, thread-ordered output, so a re-run of the agentic reviewers on searches with more than 30 matches will not replay from the cache and may differ slightly.

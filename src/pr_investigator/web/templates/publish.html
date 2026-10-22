@@ -15,6 +15,7 @@
 {% if stale %}<div class="banner warn"><strong>The pull request has moved.</strong> {{ stale }}</div>{% endif %}
 
 {% if built %}
+{% if destination %}<div class="banner warn"><strong>Destination: {{ destination }}</strong> &mdash; check this is the repository you mean to post to.</div>{% endif %}
 <div class="banner info">
   One review on commit <span class="mono">{{ built.payload.commit_id[:12] }}</span>, <code>event: COMMENT</code>:
   {{ built.inline|length }} line comment{{ '' if built.inline|length == 1 else 's' }}, {{ built.summary_only|length }} in the summary.

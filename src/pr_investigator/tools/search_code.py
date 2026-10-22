@@ -87,7 +87,7 @@ class SearchCode:
         # path -> line number -> (is_match, text)
         lines_by_file: dict[str, dict[int, tuple[bool, str]]] = defaultdict(dict)
         undecodable: set[tuple[str, int]] = set()  # lines ripgrep couldn't give us as text
-        match_lines: list[tuple[str, int]] = []
+        found: list[tuple[str, int, str]] = []
         total_matches = 0
         for raw in output.splitlines():
             event = json.loads(raw)
@@ -102,12 +102,15 @@ class SearchCode:
             text = _text(data["lines"]).rstrip("\n")
             if kind == "match":
                 total_matches += 1
-                if len(match_lines) >= args.max_results:
-                    continue
-                match_lines.append((path, number))
-                lines_by_file[path][number] = (True, text)
+                found.append((path, number, text))
             else:
                 lines_by_file[path].setdefault(number, (False, text))
+        # ripgrep searches files on several threads, so its output order varies between runs.
+        # Sort before cutting at max_results, or the same search could show different lines.
+        found.sort(key=lambda item: (item[0], item[1]))
+        match_lines = [(path, number) for path, number, _ in found[: args.max_results]]
+        for index, (path, number, text) in enumerate(found):
+            lines_by_file[path][number] = (index < args.max_results, text)
 
         query = f"{'regex' if args.regex else 'literal'} {args.pattern!r}"
         if args.path_glob:

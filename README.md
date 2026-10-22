@@ -18,7 +18,7 @@ Held-out test split (15 cases, 3 samples each, `gemini-3.5-flash-lite` on the fr
 - The skeptic verifier and the tree-sitter tools did not earn their place on this model, so they are opt-in.
 - Security: 0 canary leaks and 0 surviving injections through the output layer against a scripted worst-case model ([security.md](evals/results/security.md)).
 
-**Limitations.** 15 test cases: the intervals are wide. Location-only scoring undercounts correct findings. A2 flags decoys more often than B0/B1. The free-tier model is small, so the verifier result may not transfer to stronger models. Python only. The real-model injection resistance is not measured. No rate limiting on the webhook and login endpoints.
+**Limitations.** 15 test cases: the intervals are wide. Location-only scoring undercounts correct findings. A2 flags decoys more often than B0/B1. The free-tier model is small, so the verifier result may not transfer to stronger models. Python only. The real-model injection resistance is not measured. Rate limits are in-process and per peer address.
 
 ## Quick start
 
@@ -41,6 +41,8 @@ Reviewers: `a2` (the default) runs a planner, then one bounded investigation per
 It runs on Gemini's free tier. `.env.example` sets `PRI_LLM_MODEL=gemini-3.5-flash-lite`, the model the evaluation baseline uses (the code default is `gemini-3.8-flash`). Free-tier inputs may be used for training, so PR Investigator refuses to send a private repository's code to it.
 
 ## Demo
+
+A scripted five-minute tour is in [docs/demo.md](docs/demo.md).
 
 Every agentic run writes a trace, and `pri show` turns it into a timeline. The committed eval traces need no API key:
 

@@ -43,6 +43,7 @@ from pr_investigator.service.runtime import ServiceRuntime
 from pr_investigator.service.webhooks import MAX_BODY_BYTES, verify_signature
 from pr_investigator.service.webhooks import handle as handle_webhook
 from pr_investigator.trace import TRACE_FILE, read_trace, render_trace
+from pr_investigator.web.ratelimit import RateLimiter
 
 RUN_ID = re.compile(r"^[0-9A-Za-z][0-9A-Za-z_-]{0,63}$")
 FINDING_ID = re.compile(r"^F[0-9]{1,4}$")
@@ -66,6 +67,11 @@ def load_run(runs_dir: Path, run_id: str) -> AnyReview:
     return model.model_validate(data)
 
 
+# The form echoes the model's original text back, which can be long. Only a reviewer's *edit* is
+# length-checked (FindingEdit); an unchanged field is no edit, and posted comments are cut anyway.
+FORM_TEXT_CHARS = 200_000
+
+
 def create_app(
     settings: Settings,
     *,
@@ -84,6 +90,13 @@ def create_app(
     templates.env.filters["md"] = md_preview
     templates.env.filters["when"] = _when
     app.state.token = ui_token
+    login_limit = RateLimiter(10, 60)  # wrong-token guesses and OAuth callbacks, per minute
+    webhook_limit = RateLimiter(300, 60)
+
+    def throttle(limiter: RateLimiter, request: Request) -> None:
+        host = request.client.host if request.client else "unknown"
+        if not limiter.allow(host):
+            raise HTTPException(429, "too many requests", headers={"Retry-After": "60"})
 
     def make_github() -> GitHubClient | None:
         if github is not None:
@@ -181,6 +194,7 @@ def create_app(
     def login(request: Request, token: Annotated[str, Form()]) -> Response:
         if runtime is not None:
             raise HTTPException(404)  # the token login exists for local use only
+        throttle(login_limit, request)
         if not hmac.compare_digest(token.encode(), ui_token.encode()):
             return page(request, "login.html", None, error="Wrong token.")
         return start_session(None)
@@ -205,6 +219,7 @@ def create_app(
     def oauth_callback(request: Request, code: str = "", state: str = "") -> Response:
         if runtime is None:
             raise HTTPException(404)
+        throttle(login_limit, request)
         expected = request.cookies.get("pri_oauth_state", "")
         if not code or not expected or not hmac.compare_digest(state, expected):
             return RedirectResponse("/login?error=Sign-in+was+not+started+here", status_code=303)
@@ -220,6 +235,7 @@ def create_app(
     async def github_webhook(request: Request) -> Response:
         if runtime is None:
             raise HTTPException(404)
+        throttle(webhook_limit, request)  # before reading the body
         body = await request.body()
         if len(body) > MAX_BODY_BYTES:
             raise HTTPException(413)
@@ -335,10 +351,10 @@ def create_app(
         sid: Session,
         csrf: Annotated[str, Form()],
         action: Annotated[str, Form()],
-        title: Annotated[str, Form(max_length=200)] = "",
-        explanation: Annotated[str, Form(max_length=4000)] = "",
+        title: Annotated[str, Form(max_length=FORM_TEXT_CHARS)] = "",
+        explanation: Annotated[str, Form(max_length=FORM_TEXT_CHARS)] = "",
         severity: Annotated[str, Form()] = "",
-        suggested_fix: Annotated[str, Form(max_length=4000)] = "",
+        suggested_fix: Annotated[str, Form(max_length=FORM_TEXT_CHARS)] = "",
         reason_code: Annotated[str, Form()] = "",
         reason_text: Annotated[str, Form(max_length=4000)] = "",
     ) -> Response:
@@ -425,6 +441,7 @@ def create_app(
             why_not=why_not,
             stale=stale,
             error=error,
+            destination=_destination(review),
         )
 
     @app.get("/runs/{run_id}/publish", response_class=HTMLResponse)
@@ -462,6 +479,11 @@ def create_app(
         return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
     return app
+
+
+def _destination(review: AnyReview) -> str | None:
+    pr = review.target.pull_request
+    return f"{pr.owner}/{pr.repo}#{pr.number}" if pr else None
 
 
 def _edit(

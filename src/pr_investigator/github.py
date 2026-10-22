@@ -128,8 +128,9 @@ class GitHubClient:
             raise GitHubValidationError(f"GitHub rejected the review (422): {response.text[:300]}")
         if response.status_code in (401, 403, 404):
             raise GitHubError(
-                f"GitHub refused the review ({response.status_code}): the token needs write "
-                "access to pull requests on this repository"
+                f"GitHub refused the review ({response.status_code}): {_message(response)}. "
+                "Check that the token has write access to pull requests on this repository "
+                "(and that it was saved before `pri serve` started)"
             )
         if response.status_code not in (200, 201):
             raise GitHubError(f"GitHub returned {response.status_code} creating the review")
@@ -173,6 +174,16 @@ class GitHubClient:
         if not isinstance(payload, dict):
             raise GitHubError(f"unexpected response shape from {path}")
         return payload
+
+
+def _message(response: httpx.Response) -> str:
+    """GitHub's own explanation of a refusal, cut short; never the request or any token."""
+    try:
+        data = response.json()
+    except ValueError:
+        return response.text[:200] or "no details"
+    text = data.get("message") if isinstance(data, dict) else None
+    return str(text)[:200] if text else "no details"
 
 
 def _check_clone_url(url: str) -> None:

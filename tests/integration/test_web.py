@@ -222,3 +222,34 @@ def test_the_preview_filter_renders_a_few_constructs_and_nothing_else() -> None:
     assert "href" not in text and "&lt;script&gt;" in text
     marker = str(md_preview("<!-- pri-publication:2fe7e05c33bb4985 -->"))
     assert "idempotency marker 2fe7e05c33bb4985" in marker and "<!--" not in marker
+
+
+def test_repeated_wrong_tokens_are_throttled(settings: Settings) -> None:
+    client = client_for(settings)
+    codes = [client.post("/login", data={"token": "nope"}).status_code for _ in range(12)]
+    assert codes[:10] == [200] * 10
+    assert codes[10:] == [429, 429]
+    assert client.post("/login", data={"token": "nope"}).headers["retry-after"] == "60"
+
+
+def test_a_long_form_field_is_accepted_but_an_overlong_edit_is_a_clear_400(
+    settings: Settings, run_id: str
+) -> None:
+    client = client_for(settings)
+    csrf = login(client)
+    url = f"/runs/{run_id}/findings/F1"
+    # The form echoes the model's original text back, so a long field alone is not an error.
+    # An edit longer than the stored limit is refused with a readable message, not a 422.
+    response = client.post(url, data={"action": "approve", "csrf": csrf, "explanation": "x" * 5000})
+    assert response.status_code == 400
+    assert DecisionStore(settings.review_db).decisions(run_id) == {}
+
+
+def test_the_publish_preview_names_the_destination_repository(
+    settings: Settings, run_id: str
+) -> None:
+    client = client_for(settings)
+    csrf = login(client)
+    client.post(f"/runs/{run_id}/findings/F1", data={"action": "approve", "csrf": csrf})
+    page = client.get(f"/runs/{run_id}/publish")
+    assert "Destination:" in page.text
