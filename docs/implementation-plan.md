@@ -30,7 +30,7 @@ From [decisions.md](decisions.md):
 | 4 | Verification, aggregation and rendering | Essential | 3 |
 | 5 | Human review UI and GitHub publishing | Essential | 4 |
 | 6 | GitHub App service, automation, hardening and deployment | Essential (some parts optional) | 5 |
-| 7 | Evaluation report and portfolio polish | Core essential, extensions optional | 6 |
+| 7 | Evaluation report and polish | Core essential, extensions optional | 6 |
 | S1–S10 | Stretch goals | Optional | varies |
 
 Phases 1–5 make up the **minimum credible version**: a CLI- and UI-driven reviewer that investigates, verifies and posts approved findings through a personal token. Phase 6 makes it a real GitHub App. Phase 7 produces the results that justify the design.
@@ -354,7 +354,7 @@ Results are reported on the test split (`pri eval run --split test`). Dev cases 
 
 ---
 
-## Phase 7: Evaluation report and portfolio polish
+## Phase 7: Evaluation report and polish
 
 **Status (2026-10-22):** done, except the demo recording and the optional extensions. Suite kept at 34 cases (D27); results in `evals/results/README.md` and `security.md`; `pri eval report` builds the table. A3−sem was not built (semantic retrieval was dropped in Phase 3).
 
