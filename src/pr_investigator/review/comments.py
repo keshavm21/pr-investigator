@@ -23,9 +23,7 @@ from pr_investigator.domain import Anchor, Evidence, EvidenceRole, Finding, Revi
 MAX_FIELD_CHARS = 1_500
 MAX_BODY_CHARS = 4_000
 REDACTED = "[redacted: looks like a secret]"
-FOOTER = (
-    "<sub>Reported by PR Investigator (AI-assisted review). A person approved this comment.</sub>"
-)
+FOOTER = "<sub>Reported by PR Investigator (AI-assisted review).</sub>"
 
 _HTML = re.compile(r"<!--.*?-->|</?[A-Za-z][^>]*>", re.DOTALL)
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")

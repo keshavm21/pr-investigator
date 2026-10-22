@@ -9,6 +9,7 @@ without a person pressing the confirm button on the preview page.
 
 import hashlib
 import hmac
+import html
 import json
 import re
 import secrets
@@ -17,9 +18,10 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 from pr_investigator.agent.models import AgentReview
 from pr_investigator.config import Settings
@@ -37,6 +39,9 @@ from pr_investigator.review.decisions import (
 )
 from pr_investigator.review.report import sorted_findings
 from pr_investigator.review.reviewers import AnyReview
+from pr_investigator.service.runtime import ServiceRuntime
+from pr_investigator.service.webhooks import MAX_BODY_BYTES, verify_signature
+from pr_investigator.service.webhooks import handle as handle_webhook
 from pr_investigator.trace import TRACE_FILE, read_trace, render_trace
 
 RUN_ID = re.compile(r"^[0-9A-Za-z][0-9A-Za-z_-]{0,63}$")
@@ -62,13 +67,22 @@ def load_run(runs_dir: Path, run_id: str) -> AnyReview:
 
 
 def create_app(
-    settings: Settings, *, token: str | None = None, github: GitHubFactory | None = None
+    settings: Settings,
+    *,
+    token: str | None = None,
+    github: GitHubFactory | None = None,
+    runtime: ServiceRuntime | None = None,
 ) -> FastAPI:
+    """The review UI. With `runtime` it is the hosted service: GitHub sign-in, a permission check
+    per repository, webhooks, and posting as the App. Without it, the local single-user mode."""
     ui_token = token or secrets.token_urlsafe(24)
-    sessions: set[str] = set()
+    csrf_key = secrets.token_bytes(32) if runtime else ui_token.encode()
+    sessions: dict[str, str | None] = {}  # session id -> GitHub login (None in local mode)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")  # autoescape is on for .html
+    templates.env.filters["md"] = md_preview
+    templates.env.filters["when"] = _when
     app.state.token = ui_token
 
     def make_github() -> GitHubClient | None:
@@ -78,7 +92,7 @@ def create_app(
         return GitHubClient(secret.get_secret_value()) if secret else None
 
     def csrf_for(session: str) -> str:
-        return hmac.new(ui_token.encode(), f"csrf:{session}".encode(), hashlib.sha256).hexdigest()
+        return hmac.new(csrf_key, f"csrf:{session}".encode(), hashlib.sha256).hexdigest()
 
     def session_id(request: Request) -> str:
         sid = request.cookies.get("pri_session", "")
@@ -87,6 +101,40 @@ def create_app(
         return sid
 
     Session = Annotated[str, Depends(session_id)]
+
+    def login_of(sid: str) -> str | None:
+        return sessions.get(sid)
+
+    def allowed(review: AnyReview, run_id: str, sid: str) -> bool:
+        """Local mode: always. Service mode: only runs the service made, for people with write
+        access to that repository (checked with the App's credentials, not the user's)."""
+        if runtime is None:
+            return True
+        job = runtime.store.for_run(run_id)
+        login = login_of(sid)
+        if job is None or login is None:
+            return False
+        try:
+            return runtime.access.can_write(job.installation_id, job.repo, login)
+        except PRIError:
+            return False
+
+    def open_run(run_id: str, sid: str) -> AnyReview:
+        review = load_run(settings.runs_dir, run_id)
+        if not allowed(review, run_id, sid):
+            raise HTTPException(403, "you need write access to this repository")
+        return review
+
+    def github_for(run_id: str) -> GitHubClient | None:
+        """The client that posts. Service mode: the App, with a one-hour token for this one
+        repository and `pull_requests: write` only. Local mode: the configured token."""
+        if runtime is None:
+            return make_github()
+        job = runtime.store.for_run(run_id)
+        if job is None:
+            return None
+        token = runtime.auth.publisher_token(job.installation_id, job.repo.split("/", 1)[1])
+        return GitHubClient(token.token, transport=runtime.github_transport)
 
     def check_csrf(sid: str, supplied: str) -> None:
         if not hmac.compare_digest(supplied, csrf_for(sid)):
@@ -99,37 +147,104 @@ def create_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
+        if runtime is not None and runtime.secure_cookies:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
         return response
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}  # no data, no auth: for the container health check
 
     def page(request: Request, name: str, sid: str | None, **context: Any) -> HTMLResponse:
         csrf = csrf_for(sid) if sid else None
         return templates.TemplateResponse(request, name, {"csrf": csrf, **context})
 
+    def start_session(login: str | None) -> Response:
+        sid = secrets.token_urlsafe(24)
+        sessions[sid] = login
+        response = RedirectResponse("/", status_code=303)
+        response.set_cookie(
+            "pri_session",
+            sid,
+            httponly=True,
+            samesite="strict" if runtime is None else "lax",
+            secure=bool(runtime and runtime.secure_cookies),
+            max_age=28_800,
+        )
+        return response
+
     @app.get("/login", response_class=HTMLResponse)
-    def login_form(request: Request) -> HTMLResponse:
-        return page(request, "login.html", None)
+    def login_form(request: Request, error: str | None = None) -> HTMLResponse:
+        return page(request, "login.html", None, github=runtime is not None, error=error)
 
     @app.post("/login")
     def login(request: Request, token: Annotated[str, Form()]) -> Response:
+        if runtime is not None:
+            raise HTTPException(404)  # the token login exists for local use only
         if not hmac.compare_digest(token.encode(), ui_token.encode()):
             return page(request, "login.html", None, error="Wrong token.")
-        sid = secrets.token_urlsafe(24)
-        sessions.add(sid)
-        response = RedirectResponse("/", status_code=303)
-        response.set_cookie("pri_session", sid, httponly=True, samesite="strict", max_age=28_800)
+        return start_session(None)
+
+    @app.get("/login/github")
+    def login_github() -> Response:
+        if runtime is None:
+            raise HTTPException(404)
+        state = secrets.token_urlsafe(24)
+        response = RedirectResponse(runtime.oauth.authorize_url(state), status_code=303)
+        response.set_cookie(
+            "pri_oauth_state",
+            state,
+            httponly=True,
+            samesite="lax",  # sent when GitHub redirects back
+            secure=runtime.secure_cookies,
+            max_age=600,
+        )
         return response
+
+    @app.get("/oauth/callback")
+    def oauth_callback(request: Request, code: str = "", state: str = "") -> Response:
+        if runtime is None:
+            raise HTTPException(404)
+        expected = request.cookies.get("pri_oauth_state", "")
+        if not code or not expected or not hmac.compare_digest(state, expected):
+            return RedirectResponse("/login?error=Sign-in+was+not+started+here", status_code=303)
+        try:
+            login_name = runtime.oauth.login_for_code(code)
+        except PRIError:
+            return RedirectResponse("/login?error=GitHub+sign-in+failed", status_code=303)
+        response = start_session(login_name)
+        response.delete_cookie("pri_oauth_state")
+        return response
+
+    @app.post("/webhooks/github")
+    async def github_webhook(request: Request) -> Response:
+        if runtime is None:
+            raise HTTPException(404)
+        body = await request.body()
+        if len(body) > MAX_BODY_BYTES:
+            raise HTTPException(413)
+        secret = runtime.settings.webhook_secret
+        header = request.headers.get("x-hub-signature-256")
+        if secret is None or not verify_signature(secret.get_secret_value(), body, header):
+            raise HTTPException(401, "bad signature")  # checked before the body is parsed
+        event = request.headers.get("x-github-event", "")
+        delivery = request.headers.get("x-github-delivery", "")
+        if not event or not delivery:
+            raise HTTPException(400, "missing event headers")
+        outcome = handle_webhook(event, delivery, body, runtime.settings, runtime.store)
+        return JSONResponse({"status": outcome.status, "reason": outcome.reason}, status_code=202)
 
     @app.post("/logout")
     def logout(request: Request, sid: Session, csrf: Annotated[str, Form()]) -> Response:
         check_csrf(sid, csrf)
-        sessions.discard(sid)
+        sessions.pop(sid, None)
         response = RedirectResponse("/login", status_code=303)
         response.delete_cookie("pri_session")
         return response
 
     @app.get("/", response_class=HTMLResponse)
     def runs(request: Request, sid: Session) -> HTMLResponse:
-        rows = []
+        rows: list[dict[str, Any]] = []
         store = DecisionStore(settings.review_db)
         try:
             for run_dir in sorted(settings.runs_dir.glob("*/run.json"), reverse=True):
@@ -138,22 +253,36 @@ def create_app(
                     review = load_run(settings.runs_dir, run_id)
                 except (HTTPException, ValueError):
                     continue  # not a run we can read
+                if not allowed(review, run_id, sid):
+                    continue
+                job = runtime.store.for_run(run_id) if runtime else None
+                pr = review.target.pull_request
                 rows.append(
                     {
                         "id": run_id,
                         "title": review.target.title,
+                        "pr": pr.slug if pr else None,
+                        "created": _created(run_id),
                         "reviewer": review.reviewer,
                         "findings": len(review.findings),
+                        "posted": len(getattr(review, "posted_ids", [])),
                         "decided": len(store.decisions(run_id)),
+                        "published": bool(store.publications(run_id)),
+                        "state": job.state if job else None,
                     }
                 )
         finally:
             store.close()
-        return page(request, "runs.html", sid, runs=rows)
+        totals = {
+            "findings": sum(r["findings"] for r in rows),
+            "decided": sum(r["decided"] for r in rows),
+            "published": sum(1 for r in rows if r["published"]),
+        }
+        return page(request, "runs.html", sid, runs=rows, totals=totals, active="runs")
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run(request: Request, run_id: str, sid: Session) -> HTMLResponse:
-        review = load_run(settings.runs_dir, run_id)
+        review = open_run(run_id, sid)
         store = DecisionStore(settings.review_db)
         try:
             decisions = store.decisions(run_id)
@@ -178,6 +307,7 @@ def create_app(
         usage = ""
         if isinstance(review, AgentReview):
             usage = f"{review.requests} requests, {review.usage.input_tokens} tokens in"
+        pr = review.target.pull_request
         return page(
             request,
             "run.html",
@@ -185,13 +315,17 @@ def create_app(
             run_id=run_id,
             review=review,
             cards=cards,
+            pr_url=pr.url if pr else None,
+            pr_label=pr.slug if pr else None,
+            budget_count=len(posted),
+            rejected=sum(1 for d in decisions.values() if d.decision is Decision.REJECTED),
             refuted=getattr(review, "refuted", []),
             publications=publications,
             approved=sum(1 for d in decisions.values() if d.decision is Decision.APPROVED),
             severities=[s.value for s in Severity],
             reasons=[r.value for r in ReasonCode],
             usage=usage,
-            stale=_stale(review, make_github),
+            stale=_stale(review, lambda: github_for(run_id)),
         )
 
     @app.post("/runs/{run_id}/findings/{finding_id}")
@@ -209,7 +343,7 @@ def create_app(
         reason_text: Annotated[str, Form(max_length=4000)] = "",
     ) -> Response:
         check_csrf(sid, csrf)
-        review = load_run(settings.runs_dir, run_id)
+        review = open_run(run_id, sid)
         if not FINDING_ID.match(finding_id):
             raise HTTPException(404)
         original = next((f for f in review.findings if f.id == finding_id), None)
@@ -227,7 +361,7 @@ def create_app(
                         run_id,
                         finding_id,
                         Decision.APPROVED if action == "approve" else Decision.REJECTED,
-                        reviewer="local",
+                        reviewer=login_of(sid) or "local",
                         reason_code=code,
                         reason_text=reason_text,
                         edit=edit,
@@ -242,23 +376,24 @@ def create_app(
 
     @app.get("/runs/{run_id}/trace", response_class=HTMLResponse)
     def trace(request: Request, run_id: str, sid: Session) -> HTMLResponse:
-        load_run(settings.runs_dir, run_id)
+        open_run(run_id, sid)
         path = settings.runs_dir / run_id / TRACE_FILE
         text = render_trace(read_trace(path)) if path.is_file() else ""
         return page(request, "trace.html", sid, run_id=run_id, text=text)
 
     def preview(request: Request, run_id: str, sid: str, error: str | None = None) -> HTMLResponse:
-        review = load_run(settings.runs_dir, run_id)
+        review = open_run(run_id, sid)
         store = DecisionStore(settings.review_db)
-        client = make_github()
+        client = github_for(run_id)
+        reviewer_login = login_of(sid)
         built = None
         stale = None
         why_not = ""
         try:
-            login = None
+            login = reviewer_login
             if client is not None:
                 try:
-                    login = client.get_login()
+                    login = login or client.get_login()
                     stale = check_stale(client, review)
                 except PRIError as exc:
                     why_not = str(exc)
@@ -271,7 +406,11 @@ def create_app(
         finally:
             store.close()
         if client is None:
-            why_not = "Set GITHUB_TOKEN (with pull request write access) to enable posting."
+            why_not = (
+                "This run has no installation to post through."
+                if runtime
+                else "Set GITHUB_TOKEN (with pull request write access) to enable posting."
+            )
         elif review.target.pull_request is None:
             why_not = "This run isn't a GitHub pull request."
         return page(
@@ -281,6 +420,7 @@ def create_app(
             run_id=run_id,
             built=built,
             payload_json=json.dumps(built.payload, indent=2) if built else "",
+            comments=_comment_views(built.payload["comments"]) if built else [],
             can_post=built is not None and not why_not,
             why_not=why_not,
             stale=stale,
@@ -300,13 +440,21 @@ def create_app(
         allow_stale: Annotated[str, Form()] = "",
     ) -> Response:
         check_csrf(sid, csrf)
-        review = load_run(settings.runs_dir, run_id)
-        client = make_github()
+        review = open_run(run_id, sid)
+        client = github_for(run_id)
         if client is None:
             raise HTTPException(400, "no GitHub token is configured")
         store = DecisionStore(settings.review_db)
         try:
-            publish(client, review, store, run_id=run_id, post=True, allow_stale=bool(allow_stale))
+            publish(
+                client,
+                review,
+                store,
+                run_id=run_id,
+                post=True,
+                allow_stale=bool(allow_stale),
+                approved_by=login_of(sid),
+            )
         except PRIError as exc:
             store.close()
             return preview(request, run_id, sid, error=str(exc))
@@ -339,19 +487,64 @@ def _evidence_view(item: Any, review: AnyReview) -> dict[str, Any]:
             "label": f"search {item.query}",
             "link": None,
             "note": item.note,
-            "snippet": None,
+            "lines": [],
         }
+    first = item.start_line or 1
+    lines = [(first + i, text) for i, text in enumerate((item.snippet or "").split("\n"))]
     return {
         "role": item.role.value,
         "label": f"{evidence_label(item)} ({item.ref})",
         "link": evidence_url(item, review.target),
         "note": item.note,
-        "snippet": item.snippet,
+        "lines": lines if item.snippet else [],
     }
 
 
-def _stale(review: AnyReview, make_github: GitHubFactory) -> str | None:
-    client = make_github()
+_PREVIEW_LINK = re.compile(r"\[(`?)([^\]`]+)\1\]\((https://github\.com/[^)\s]+)\)")
+_PREVIEW_MARKER = re.compile(r"&lt;!-- pri-publication:([0-9a-f]+) --&gt;")
+
+
+def md_preview(text: str) -> Markup:
+    """A readable preview of comment markdown. Everything is HTML-escaped first, then only
+    four constructs are turned back into tags: bold, code spans, links to github.com (the only
+    links the sanitizer lets through) and <sub>. Nothing the text contains can become markup."""
+    safe = html.escape(text)
+    safe = _PREVIEW_LINK.sub(lambda m: f'<a href="{m[3]}" rel="noreferrer">{m[2]}</a>', safe)
+    safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
+    safe = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", safe)
+    safe = re.sub(r"&lt;sub&gt;(.*?)&lt;/sub&gt;", r'<span class="muted small">\1</span>', safe)
+    safe = _PREVIEW_MARKER.sub(r'<span class="chip">idempotency marker \1</span>', safe)
+    return Markup(safe)
+
+
+def _when(iso: str) -> str:
+    """'2026-10-21 19:51' from an ISO timestamp."""
+    return iso.replace("T", " ")[:16]
+
+
+def _created(run_id: str) -> str:
+    """'2026-10-21 19:13' from a run id like 20261021-191323-04ab5b; the id if it isn't one."""
+    match = re.match(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})", run_id)
+    return f"{match[1]}-{match[2]}-{match[3]} {match[4]}:{match[5]}" if match else run_id
+
+
+def _comment_views(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": c["path"],
+            "lines": f"{c['start_line']}-{c['line']}" if "start_line" in c else str(c["line"]),
+            "side": "deleted lines" if c["side"] == "LEFT" else "new version",
+            "body": c["body"],
+        }
+        for c in comments
+    ]
+
+
+def _stale(review: AnyReview, make_client: GitHubFactory) -> str | None:
+    try:
+        client = make_client()
+    except PRIError:
+        return None
     if client is None or review.target.pull_request is None:
         return None
     try:

@@ -178,13 +178,18 @@ def publish(
     run_id: str,
     post: bool,
     allow_stale: bool = False,
+    approved_by: str | None = None,
 ) -> PublishResult:
-    """Preview (post=False) or send the review for the approved findings."""
+    """Preview (post=False) or send the review for the approved findings.
+
+    `approved_by` is the reviewer's GitHub login when the poster isn't the reviewer (the hosted
+    service posts as the App). Without it the token's owner is the reviewer, as in local mode.
+    """
     pr = review.target.pull_request
     if pr is None:
         raise PublishError("this run isn't a GitHub pull request, so there is nothing to post to")
     decisions = store.decisions(run_id)
-    login = client.get_login()
+    login = approved_by or client.get_login()
     built = build_review(review, decisions, run_id=run_id, approved_by=login)
     stale = check_stale(client, review)
     if stale is not None and not allow_stale:

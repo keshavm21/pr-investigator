@@ -1,0 +1,94 @@
+{
+  "run": {
+    "reviewer": "a3",
+    "started_at": "2026-10-22T10:09:52+00:00",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "judge": "location-only",
+    "samples": 3,
+    "tolerance": 3,
+    "review_prompt": "planner.v1, investigator.v3, agent_loop.v2, skeptic.v1",
+    "cases": [
+      "clean-werkzeug-content-type-helper",
+      "clean-werkzeug-range-to-header",
+      "decoy-inventory-export-write",
+      "decoy-werkzeug-proxy-fix-logging",
+      "decoy-werkzeug-send-static",
+      "seeded-inventory-cancel-order",
+      "seeded-inventory-set-role",
+      "seeded-inventory-update-price-convention",
+      "seeded-werkzeug-content-range-off-by-one",
+      "seeded-werkzeug-debugger-pin-check",
+      "seeded-werkzeug-number-converter-rename",
+      "seeded-werkzeug-password-compare",
+      "seeded-werkzeug-proxy-fix-client-ip",
+      "seeded-werkzeug-safe-join-dotdot",
+      "seeded-werkzeug-uuid-converter"
+    ],
+    "stopped_early": null,
+    "prompts": {
+      "planner.v1": "b318b414f15106d48d31b18ef75cda23e26155791619440a882c7260d981085a",
+      "investigator.v3": "7fb2805a5d902b69b562f114947fd4b7fc6ef848e8f1ec80484f2a06b7ba6e40",
+      "agent_loop.v2": "b63bdbfd567685d38031383a63bf9e136d2d33e30ef13db06465d8d2e6cb8900",
+      "skeptic.v1": "b5e24f245e08724fa2de8c679025d4eb25e7f1267289bf0b01199eb6ffbdf7f1"
+    },
+    "budget": {
+      "max_suspects": 4,
+      "investigation_turns": 6,
+      "single_agent_turns": 12,
+      "max_tool_calls_per_turn": 3,
+      "max_tool_output_chars": 4000,
+      "investigation_diff_chars": 8000,
+      "single_agent_diff_chars": 24000,
+      "max_findings": 4
+    },
+    "code_commit": "c04ff9803d1a301408d99e77804bb788f3c42ef8",
+    "code_dirty": true,
+    "provider_requests": 92,
+    "split": "test",
+    "toolset": "base",
+    "context": false
+  },
+  "summary": {
+    "runs": 45,
+    "failed_runs": 0,
+    "findings": 30,
+    "true_positives": 25,
+    "partial_matches": 0,
+    "false_positives": 5,
+    "expected_issues": 39,
+    "precision": 0.8333333333333334,
+    "recall": 0.6410256410256411,
+    "f0_5": 0.7861635220125787,
+    "false_positives_per_clean_run": 0.0,
+    "decoy_trigger_rate": 0.3333333333333333,
+    "anchor_in_diff_rate": 1.0,
+    "exact_location_rate": 0.72,
+    "input_tokens": 1896110,
+    "output_tokens": 53426,
+    "cached_runs": 24,
+    "requests": 459,
+    "cached_requests": 367,
+    "requests_per_run": 10.2,
+    "max_requests_per_run": 23,
+    "agent": {
+      "suspects": 58,
+      "dropped_suspects": 0,
+      "outcomes": {
+        "refuted": 20,
+        "confirmed": 33,
+        "inconclusive": 5
+      },
+      "stop_causes": {
+        "submitted": 80,
+        "turn_budget": 9
+      },
+      "turns": 414,
+      "tool_calls": 344,
+      "rejections": 12,
+      "duplicates": 2,
+      "retries": 0
+    },
+    "verified_evidence_rate": 1.0
+  }
+}

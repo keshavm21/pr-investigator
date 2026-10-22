@@ -1,0 +1,75 @@
+# One VM, one database (SQLite on the shared volume), four containers.
+#
+# The trust zones of docs/security.md §4 are the separate env files:
+#   control.env  GitHub App key, webhook secret, OAuth secret   -> web, fetcher
+#   worker.env   the LLM API key and nothing else               -> worker
+# The worker refuses to start if it can see a GitHub credential.
+#
+#   cp deploy/control.env.example deploy/control.env   # then fill both files in
+#   cp deploy/worker.env.example  deploy/worker.env
+#   docker compose up -d --build
+
+x-app: &app
+  build: .
+  image: pr-investigator:local
+  restart: unless-stopped
+  volumes:
+    - data:/data
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  web:
+    <<: *app
+    command: ["service", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: deploy/control.env
+    secrets: [github_app_key]
+    environment:
+      GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github_app_key
+    expose: ["8000"]
+
+  fetcher:
+    <<: *app
+    command: ["worker", "--role", "fetch"]
+    env_file: deploy/control.env
+    secrets: [github_app_key]
+    environment:
+      GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github_app_key
+    healthcheck:
+      disable: true
+    depends_on: [web]
+
+  worker:
+    <<: *app
+    command: ["worker", "--role", "analyze"]
+    env_file: deploy/worker.env      # no GitHub credentials here, by design
+    healthcheck:
+      disable: true
+    depends_on: [web]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PRI_DOMAIN: ${PRI_DOMAIN:?set PRI_DOMAIN to the public host name}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+
+secrets:
+  github_app_key:
+    file: ./deploy/github-app.pem
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

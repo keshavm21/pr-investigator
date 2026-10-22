@@ -519,6 +519,8 @@ Phase 2's prompts are `planner.v1`, `investigator.v3`, `single_agent.v3` and `ag
 - **Local webhook development.** smee.io forwarding.
 - **Library.** Phase 1 uses httpx for its single REST endpoint. githubkit (typed, async, GitHub App auth helpers) comes with GitHub App auth (D22).
 
+**As built in Phase 6** (`service/`). Everything above is implemented with httpx and PyJWT (not githubkit): `app_auth.py` signs the App JWT and mints installation tokens narrowed to one repository and one permission (and refuses a token that grants less than requested); `webhooks.py` verifies `X-Hub-Signature-256` on the raw body before parsing, dedupes on `X-GitHub-Delivery`, and handles `pull_request` (opened, reopened, synchronize, ready_for_review, closed) and `installation` events; `admission.py` applies the allowlist, draft, private-repository, size and daily-budget rules; `oauth.py` and `access.py` sign reviewers in and check write access to each repository (reading the permission with a metadata-only installation token). `store.py` is the SQLite queue; `pipeline.py` has the two worker roles; `repo_config.py` reads `.pr-investigator.yml` from the base commit; `runtime.py` wires them into `web/app.py` (`pri service`). The reviewer is shown as `Approved by @login` and the App posts. No GitHub Check Run, `/investigate` command or egress proxy.
+
 ## 9. Data model
 
 *Revised 2026-10-21:* Phase 5 kept runs as JSON files and stores review decisions and publications in a SQLite file (`.pri/review.sqlite`); Postgres moves to Phase 6 with the multi-user service (D10). The design below is the Phase 6 target. From the service on, everything lives in Postgres (D10, revised 2026-10-18). Phase 3 adds a structural index as a SQLite file under `.pri/`, keyed by blob SHA. Until Phase 5, each run is files under `.pri/runs/<run id>/`: `run.json` (the full result: findings with their evidence and, for agentic reviewers, suspects, investigations, outcomes, budgets and request counts), `review.md`, and for A1 and A2 `trace.jsonl`. Domain objects are typed models in code. JSONB holds stage outputs and verdicts, whose shape evolves quickly.
@@ -562,7 +564,7 @@ Every row belongs to one installation, directly or through its parent, and every
 
 ## 11. Deployment
 
-- **Container.** One image containing the Python app plus git, ripgrep, Semgrep/Opengrep and optionally ast-grep, with `web`, `worker` and `cli` entrypoints, alongside Postgres with pgvector.
+- **Container.** One image containing the Python app plus git, ripgrep, Semgrep/Opengrep and optionally ast-grep, with `web`, `worker` and `cli` entrypoints, alongside Postgres with pgvector. *As built (Phase 6):* one image with git and ripgrep (no Semgrep, no Postgres), run as non-root with a read-only root filesystem; the entrypoint is `pri`, and the role is the command (`service`, `worker --role fetch`, `worker --role analyze`). See `Dockerfile`, `compose.yaml`, `deploy/` and [runbook.md](runbook.md).
 - **Local.** Docker Compose runs Postgres, the web app and the worker. CLI-only mode needs just Postgres.
 - **Hosted demo** (D20). The recommendation is a single small VM running Compose behind Caddy for TLS: cheap, and it leaves room for gVisor if S1 happens. A PaaS with managed Postgres is the lower-ops alternative. The App is installed only on allowlisted repositories to cap spend.
 - **CI** (GitHub Actions). Lint, type check, unit and integration tests (with a Postgres service container), replay-based agent tests, and an image build. Live evals run only through manual dispatch on trusted branches with a budget cap, never on fork PRs.
@@ -617,6 +619,7 @@ pr-investigator/
 │   ├── review/               # B0/B1, context pack and leads, aggregation, comment rendering,
 │   │                         #   review decisions, the shared reviewer entry point, run reports
 │   ├── publish.py            # approved findings -> one GitHub review (the only code that posts)
+│   ├── service/              # GitHub App auth, webhooks, admission, SQLite queue, fetch/analyze workers
 │   ├── web/                  # the review UI: FastAPI app, Jinja2 templates, CSS
 │   └── evaluation/           # cases, materialization, matching, metrics, runner
 ├── evals/

@@ -1,0 +1,93 @@
+{
+  "run": {
+    "reviewer": "a2",
+    "started_at": "2026-10-22T08:26:12+00:00",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "judge": "location-only",
+    "samples": 3,
+    "tolerance": 3,
+    "review_prompt": "planner.v1, investigator.v3, agent_loop.v2",
+    "cases": [
+      "clean-werkzeug-content-type-helper",
+      "clean-werkzeug-range-to-header",
+      "decoy-inventory-export-write",
+      "decoy-werkzeug-proxy-fix-logging",
+      "decoy-werkzeug-send-static",
+      "seeded-inventory-cancel-order",
+      "seeded-inventory-set-role",
+      "seeded-inventory-update-price-convention",
+      "seeded-werkzeug-content-range-off-by-one",
+      "seeded-werkzeug-debugger-pin-check",
+      "seeded-werkzeug-number-converter-rename",
+      "seeded-werkzeug-password-compare",
+      "seeded-werkzeug-proxy-fix-client-ip",
+      "seeded-werkzeug-safe-join-dotdot",
+      "seeded-werkzeug-uuid-converter"
+    ],
+    "stopped_early": null,
+    "prompts": {
+      "planner.v1": "b318b414f15106d48d31b18ef75cda23e26155791619440a882c7260d981085a",
+      "investigator.v3": "7fb2805a5d902b69b562f114947fd4b7fc6ef848e8f1ec80484f2a06b7ba6e40",
+      "agent_loop.v2": "b63bdbfd567685d38031383a63bf9e136d2d33e30ef13db06465d8d2e6cb8900"
+    },
+    "budget": {
+      "max_suspects": 4,
+      "investigation_turns": 6,
+      "single_agent_turns": 12,
+      "max_tool_calls_per_turn": 3,
+      "max_tool_output_chars": 4000,
+      "investigation_diff_chars": 8000,
+      "single_agent_diff_chars": 24000,
+      "max_findings": 4
+    },
+    "code_commit": "c04ff9803d1a301408d99e77804bb788f3c42ef8",
+    "code_dirty": true,
+    "provider_requests": 216,
+    "split": "test",
+    "toolset": "base",
+    "context": false
+  },
+  "summary": {
+    "runs": 45,
+    "failed_runs": 0,
+    "findings": 31,
+    "true_positives": 25,
+    "partial_matches": 0,
+    "false_positives": 6,
+    "expected_issues": 39,
+    "precision": 0.8064516129032258,
+    "recall": 0.6410256410256411,
+    "f0_5": 0.7668711656441719,
+    "false_positives_per_clean_run": 0.0,
+    "decoy_trigger_rate": 0.4444444444444444,
+    "anchor_in_diff_rate": 1.0,
+    "exact_location_rate": 0.72,
+    "input_tokens": 1315737,
+    "output_tokens": 41927,
+    "cached_runs": 14,
+    "requests": 325,
+    "cached_requests": 111,
+    "requests_per_run": 7.222222222222222,
+    "max_requests_per_run": 18,
+    "agent": {
+      "suspects": 58,
+      "dropped_suspects": 0,
+      "outcomes": {
+        "refuted": 20,
+        "confirmed": 33,
+        "inconclusive": 5
+      },
+      "stop_causes": {
+        "submitted": 53,
+        "turn_budget": 5
+      },
+      "turns": 280,
+      "tool_calls": 227,
+      "rejections": 8,
+      "duplicates": 2,
+      "retries": 2
+    },
+    "verified_evidence_rate": 1.0
+  }
+}

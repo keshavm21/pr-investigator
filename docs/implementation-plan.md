@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Status (2026-10-21):** Phases 1 to 4 are complete. Phase 3 is complete: the structural index and tools, the context pack (B1) and the leads are built, and the ablations on the held-out test split are committed with a decision for each component. A2 is the default reviewer (D5). Phase 4 is complete too: the skeptic verifier (A3, opt-in: it removed no false positive on this model), ranking and the noise budget (applied to A1 and A2), and sanitized comment rendering with secret scanning. Phase 5 is built (review UI, publisher, decisions, `pri publish`); its exit criterion needs a real test PR and your token, which is still to do. Phase 6 needs your approval to start.
+> **Status (2026-10-21):** Phases 1 to 4 are complete. Phase 3 is complete: the structural index and tools, the context pack (B1) and the leads are built, and the ablations on the held-out test split are committed with a decision for each component. A2 is the default reviewer (D5). Phase 4 is complete too: the skeptic verifier (A3, opt-in: it removed no false positive on this model), ranking and the noise budget (applied to A1 and A2), and sanitized comment rendering with secret scanning. Phase 5 is built (review UI, publisher, decisions, `pri publish`), and its exit criterion still needs a real test PR. Phase 6 (GitHub App service, webhooks, queue, repository config, trust zones, sign-in, deployment) is built and tested against mocked GitHub; its exit criterion needs a real App on a test repository. Phase 7 is complete (2026-10-22): the 3-sample test-split ablation with intervals, cost per true positive and the security eval are in `evals/results/`, and the README summarizes them. The Phase 5 and Phase 6 exit checks still need real GitHub accounts.
 
 The order follows risk. The most uncertain question is whether agentic investigation produces precise, evidence-backed findings at acceptable cost, so it gets built and measured first. GitHub App plumbing and the UI are well-understood engineering and come later.
 
@@ -337,11 +337,24 @@ Results are reported on the test split (`pri eval run --split test`). Dev cases 
 
 **Exit criteria:** on a test repository, opening a PR runs an analysis automatically, and a logged-in reviewer can approve and publish the findings. Security tests for webhooks and UI authorization are green.
 
+**Status (2026-10-22).** Built, with tests that use a mock GitHub (`tests/unit/test_service.py`, `tests/integration/test_service_pipeline.py`, `tests/integration/test_service_web.py`):
+- **GitHub App auth:** an RS256 JWT, then installation tokens narrowed per job: the fetcher gets `contents: read` for one repository, the publisher `pull_requests: write` for one repository. A token that grants less than asked is refused.
+- **Webhook endpoint:** HMAC-SHA256 checked on the raw body before parsing, delivery dedupe, installation lifecycle events, admission policy (allowlist, drafts, private repositories, size limits, a per-installation daily budget), and a `202` after writing rows only.
+- **Queue and worker:** a SQLite job table with guarded state changes (`queued → fetching → ready → analyzing → awaiting_review`, or `superseded`, `skipped`, `failed`). A new push supersedes the older jobs of that PR, a close stops them, and a job whose head moved is dropped before any fetch.
+- **Repository config** (`.pr-investigator.yml`) read from the base commit only; unknown keys make it invalid.
+- **Trust zones:** the fetcher and web app hold the App credentials; the analysis worker holds none and refuses to start if it sees one.
+- **Reviewer login:** GitHub OAuth; every run page checks that the signed-in person has write access to that repository (with the App's credentials, cached for 5 minutes). Cookies are `Secure`, `HttpOnly`, `SameSite=Lax`; CSRF and the CSP from Phase 5 apply.
+- **Deployment:** `Dockerfile` (built and smoke-tested), `compose.yaml` (validated), Caddy for TLS, env templates, and [the runbook](runbook.md).
+
+**Decisions made here** (recorded in the register): the queue is SQLite, not procrastinate on Postgres (one VM, one database; D11, D10); posting is as the App with the reviewer named in each comment (D15). **Not done:** a real App on a real repository (it needs your GitHub account; the runbook has the steps); the optional Check Run, `/investigate` command and egress proxy; Postgres.
+
 **Main risks:** operational complexity (keep it to one VM and one database), and webhook edge cases (redeliveries, out-of-order events).
 
 ---
 
 ## Phase 7: Evaluation report and portfolio polish
+
+**Status (2026-10-22):** done, except the demo recording and the optional extensions. Suite kept at 34 cases (D27); results in `evals/results/README.md` and `security.md`; `pri eval report` builds the table. A3−sem was not built (semantic retrieval was dropped in Phase 3).
 
 **Goal:** credible, reproducible results and a project that explains itself.
 

@@ -1,7 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Trace {{ run_id }}{% endblock %}
+{% block title %}Trace{% endblock %}
 {% block body %}
-<p><a href="/runs/{{ run_id }}">← Run</a></p>
-<h1>Trace</h1>
-{% if text %}<pre>{{ text }}</pre>{% else %}<p class="muted">This run has no trace (B0 makes one call and records none).</p>{% endif %}
+<div class="crumbs"><a href="/">Runs</a> / <a href="/runs/{{ run_id }}" class="mono">{{ run_id }}</a> / Trace</div>
+<div class="page-head">
+  <div><h1>Investigation trace</h1><div class="sub">Every model turn, tool call and evidence check of this run, in order.</div></div>
+  <div class="actions"><a class="btn" href="/runs/{{ run_id }}">Back to the run</a></div>
+</div>
+{% if text %}<pre class="trace">{{ text }}</pre>
+{% else %}<div class="card empty"><div class="big">📭</div><p>This run has no trace. The one-call reviewers (b0, b1) record none.</p></div>{% endif %}
 {% endblock %}

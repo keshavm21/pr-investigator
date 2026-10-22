@@ -262,3 +262,32 @@ The severity rule removes the low-severity decoy finding, raising precision to 1
 | Rendering, sanitizer, secret scanner, anchor resolution | **Keep** | Required for posting; covered by unit tests, including a model that obeys every injection |
 | Suggestion blocks | **Not built** | The model's fix is free text, not replacement code that can be checked to parse |
 | Injection fixtures in the live eval suite | **Not built** | The unit and pipeline tests cover the output layer with scripted models; live injection cases would use quota to test the model, not the guarantees |
+
+## Phase 7: the full ablation on the test split (3 samples)
+
+Five configurations on the 15 held-out test cases (13 seeded issues, so 39 issue-samples per column), 3 samples each, `--no-judge`, `gemini-3.5-flash-lite`, 425 real provider requests on 2026-10-22. Nothing was tuned on these cases (D26). Intervals are 95% percentile bootstraps that resample whole cases (`pri eval report`); with 15 cases they are wide.
+
+| Test split, 3 samples | B0 | B1 | A1 | A2 | A3 |
+|---|---|---|---|---|---|
+| Precision (95% CI) | 81% (50–100%) | **100% (100–100%)** | 75% (0–100%) | 81% (57–97%) | 83% (63–97%) |
+| Recall (95% CI) | 44% (21–62%) | 44% (20–62%) | 23% (0–43%) | **64% (45–81%)** | 64% (45–81%) |
+| False positives per clean run | 0.50 | 0.00 | 0.00 | 0.00 | 0.00 |
+| Decoy runs flagged | 0 of 9 | 0 of 9 | 1 of 9 | 4 of 9 | 3 of 9 |
+| Requests per run (mean / max) | 1.0 / 1 | 1.0 / 1 | 5.7 / 11 | 7.2 / 18 | 10.2 / 23 |
+| Requests per true positive (95% CI) | 2.6 (1.6–7.5) | 2.6 (1.6–7.5) | 28.3 (12.5–95) | 13.0 (9.0–24.8) | 18.4 (13.8–31.5) |
+| Input tokens per true positive (95% CI) | 2.6K | 3.3K | 137K | 53K | 76K |
+| Median seconds per live run | 2 | 10 | 33 | 53 | n/a |
+
+- **Directories:** `20261022-{b0,b1,a1,a2,a3}-test3/`. **Command:** `PRI_LLM_REQUESTS_PER_MINUTE=10 uv run pri eval run --split test --samples 3 --no-judge --reviewer <r>`; table: `uv run pri eval report B0=<dir> ...`.
+- **Cache.** Earlier samples replayed from the response cache (B0, B1 and A1 samples 0–1; A2 and A3 sample 0 where the requests matched), so those columns mix old and new samples. A3 ran after A2 and replayed A2's requests, so its median latency is not measurable (all cached) and its request count includes replayed A2 requests (real new requests: 92).
+- **Latency** is paced by the 10 requests-per-minute limiter and is only indicative; requests per run is the better cost proxy.
+- **Recall is location-only, so it undercounts.** Two correct A2 findings (the cancellation IDOR, the converter rename) are scored as misses by location matching.
+
+**Reading.**
+1. **A2 has the best recall (64%)**, about 20 points above B0/B1 and 40 above A1. Its interval (45–81%) is clear of A1's (0–43%) and nearly clear of B0/B1's upper end (62%), so the ordering A2 > B0/B1 > A1 holds on this suite, narrowly for B0/B1.
+2. **B1 is the cheapest precise option**: 100% precision, no false positive on a clean PR, one request. It trades recall for that.
+3. **A2's cost is its decoy rate.** It flagged decoys in 4 of 9 runs (the ProxyFix logging decoy in 3 of 3 samples, the export-write decoy once), where B0/B1 flagged none. The D17 severity rule removes the low-severity ones before posting, but the raw numbers show the agent is more speculative than the single call.
+4. **A3 (skeptic) again adds cost, not value**: +3 requests per run (+42%), precision +2 points, recall unchanged, decoy hits 4 to 3 of 9. Within noise; it stays opt-in (D-register).
+5. **A1 is dominated**: lowest recall, highest cost per true positive. The planner in A2 is what helps, as in Phase 2.
+
+**Decision.** No change to defaults: A2 stays the default for recall, B1 is the recommended cheap mode. The security results are in [security.md](security.md).

@@ -203,3 +203,22 @@ def test_a_corrupt_run_file_does_not_break_the_list(settings: Settings, run_id: 
     login(client)
     assert client.get("/").status_code == 200
     assert Path(settings.runs_dir / run_id / "run.json").is_file()
+
+
+def test_the_preview_filter_renders_a_few_constructs_and_nothing_else() -> None:
+    from pr_investigator.web.app import md_preview
+
+    link = "[`a.py:3`](https://github.com/acme/app/blob/" + "a" * 40 + "/a.py#L3)"
+    out = str(md_preview(f"**Bold** `code` {link} <sub>small</sub>"))
+    assert "<strong>Bold</strong>" in out and "<code>code</code>" in out
+    assert 'href="https://github.com/acme/app/blob/' in out and "<span class=" in out
+    # Nothing in the text can become markup, and only github.com links are made clickable.
+    hostile = md_preview(
+        "<script>alert(1)</script> <img src=x onerror=1> [x](https://evil.example/a) "
+        "[y](javascript:alert(1)) **<b>**"
+    )
+    text = str(hostile)
+    assert "<script" not in text and "<img" not in text and "<b>" not in text
+    assert "href" not in text and "&lt;script&gt;" in text
+    marker = str(md_preview("<!-- pri-publication:2fe7e05c33bb4985 -->"))
+    assert "idempotency marker 2fe7e05c33bb4985" in marker and "<!--" not in marker

@@ -15,7 +15,9 @@ def data_class_for(info: PullRequestInfo) -> DataClass:
     return DataClass.PRIVATE if info.base_repo_private else DataClass.PUBLIC
 
 
-def from_github(info: PullRequestInfo, workspaces_dir: Path) -> tuple[ReviewTarget, ws.Workspace]:
+def from_github(
+    info: PullRequestInfo, workspaces_dir: Path, *, token: str | None = None
+) -> tuple[ReviewTarget, ws.Workspace]:
     """Fetch the PR's base branch and head into a private mirror.
 
     Callers check the data policy (`data_class_for`) before calling this, so private code is
@@ -30,6 +32,7 @@ def from_github(info: PullRequestInfo, workspaces_dir: Path) -> tuple[ReviewTarg
             f"+refs/heads/{info.base_ref}:{BASE_REF}",
             f"+refs/pull/{info.ref.number}/head:{HEAD_REF}",
         ],
+        token=token,
     )
     base_sha = _resolve(mirror, info.base_sha, "PR base")
     head_sha = _resolve(mirror, info.head_sha, "PR head")

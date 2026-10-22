@@ -1,18 +1,51 @@
 {% extends "base.html" %}
 {% block title %}Runs{% endblock %}
 {% block body %}
-<h1>Runs</h1>
-{% if not runs %}<p class="muted">No runs yet. Run <code>pri review</code> first.</p>{% endif %}
-<table>
-<tr><th>Run</th><th>Pull request</th><th>Reviewer</th><th>Findings</th><th>Decided</th></tr>
-{% for r in runs %}
-<tr>
-  <td><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
-  <td>{{ r.title }}</td>
-  <td>{{ r.reviewer }}</td>
-  <td>{{ r.findings }}</td>
-  <td>{{ r.decided }}</td>
-</tr>
-{% endfor %}
-</table>
+<div class="page-head">
+  <div>
+    <h1>Runs</h1>
+    <div class="sub">Every review the tool has produced. Open one to inspect the evidence and decide what gets posted.</div>
+  </div>
+</div>
+
+{% if runs %}
+<div class="stats">
+  <div class="card stat"><div class="n">{{ runs|length }}</div><div class="l">runs</div></div>
+  <div class="card stat"><div class="n">{{ totals.findings }}</div><div class="l">findings</div></div>
+  <div class="card stat"><div class="n">{{ totals.decided }}</div><div class="l">decided by you</div></div>
+  <div class="card stat"><div class="n">{{ totals.published }}</div><div class="l">published</div></div>
+</div>
+<div class="run-list">
+  {% for r in runs %}
+  <a class="card run-item" href="/runs/{{ r.id }}">
+    <div>
+      <div class="title">{{ r.title }}</div>
+      <div class="meta">
+        {% if r.pr %}{{ r.pr }} · {% endif %}{{ r.created }} · <span class="mono">{{ r.id }}</span>
+      </div>
+      <div class="chips" style="margin-top:.55rem">
+        <span class="chip brand">{{ r.reviewer }}</span>
+        <span class="chip {{ 'good' if r.findings else '' }}">{{ r.findings }} finding{{ '' if r.findings == 1 else 's' }}</span>
+        {% if r.posted %}<span class="chip info">{{ r.posted }} in noise budget</span>{% endif %}
+        {% if r.published %}<span class="chip good">published</span>{% endif %}
+        {% if r.state == 'superseded' %}<span class="chip warn">superseded by a newer push</span>{% endif %}
+      </div>
+    </div>
+    <div class="run-side">
+      {% if r.findings %}
+      <div>{{ r.decided }} of {{ r.findings }} decided</div>
+      <div class="progress"><i style="width: {{ (100 * r.decided / r.findings)|round|int }}%"></i></div>
+      {% else %}<div>nothing to decide</div>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">
+  <div class="big">🔎</div>
+  <h2>No runs yet</h2>
+  <p>Review a pull request and it will show up here:</p>
+  <p><code>pri review https://github.com/OWNER/REPO/pull/N</code></p>
+</div>
+{% endif %}
 {% endblock %}

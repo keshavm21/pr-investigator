@@ -9,6 +9,7 @@ Repository content is untrusted, so git runs hardened:
 Nothing from a reviewed repository is ever executed.
 """
 
+import base64
 import hashlib
 import os
 import shutil
@@ -204,15 +205,33 @@ def ensure_mirror(workspaces_dir: Path, source: str) -> Path:
 
 
 def fetch(
-    mirror: Path, source: str, refspecs: Sequence[str], *, allow_any_sha: bool = False
+    mirror: Path,
+    source: str,
+    refspecs: Sequence[str],
+    *,
+    allow_any_sha: bool = False,
+    token: str | None = None,
 ) -> None:
-    """Fetch `refspecs` from `source` (an https URL or a local path) into the mirror."""
+    """Fetch `refspecs` from `source` (an https URL or a local path) into the mirror.
+
+    With `token` (a GitHub installation token), the request is authenticated through an HTTP
+    header passed in the environment of this one git process: the token is never put in the URL,
+    the command line, or any git config file.
+    """
     args = ["fetch", "--no-tags", "--no-recurse-submodules", "--force", "--quiet", source]
     extra: list[str] = []
     if allow_any_sha:
         # Lets a local upload-pack serve commits by SHA (passed down via GIT_CONFIG_PARAMETERS).
         extra = ["-c", "uploadpack.allowAnySHA1InWant=true"]
-    run_git([*extra, *args, *refspecs], git_dir=mirror)
+    env: dict[str, str] | None = None
+    if token is not None:
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
+        }
+    run_git([*extra, *args, *refspecs], git_dir=mirror, extra_env=env)
 
 
 def resolve_commit(rev: str, *, git_dir: Path | None = None, cwd: Path | None = None) -> str:

@@ -16,3 +16,5 @@ __pycache__/
 # Local run data, workspaces and the LLM response cache
 .pri/
 CLAUDE.md
+deploy/*.env
+deploy/*.pem

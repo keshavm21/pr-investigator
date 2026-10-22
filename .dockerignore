@@ -1,0 +1,15 @@
+.git
+.venv
+venv.nosync
+.pri
+.env
+.env.*
+deploy/*.env
+__pycache__
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.hypothesis
+tests
+evals
+docs

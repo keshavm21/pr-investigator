@@ -1,22 +1,52 @@
 {% extends "base.html" %}
-{% block title %}Publish {{ run_id }}{% endblock %}
+{% block title %}Publish preview{% endblock %}
 {% block body %}
-<p><a href="/runs/{{ run_id }}">← Run</a></p>
-<h1>Publish preview</h1>
-{% if error %}<p class="bad">{{ error }}</p>{% endif %}
-{% if stale %}<p class="warn">{{ stale }}</p>{% endif %}
+<div class="crumbs"><a href="/">Runs</a> / <a href="/runs/{{ run_id }}" class="mono">{{ run_id }}</a> / Publish</div>
+<div class="page-head">
+  <div><h1>Publish preview</h1><div class="sub">Nothing is sent until you press the button at the bottom.</div></div>
+  <div class="actions"><a class="btn" href="/runs/{{ run_id }}">Back to the run</a></div>
+</div>
+
+<ol class="steps">
+  <li class="on">Approve findings</li><li class="{{ 'on' if built }}">Check the exact payload</li><li>Post to GitHub</li>
+</ol>
+
+{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+{% if stale %}<div class="banner warn"><strong>The pull request has moved.</strong> {{ stale }}</div>{% endif %}
+
 {% if built %}
-<p>One review, <code>event: COMMENT</code>, on commit <code>{{ built.payload.commit_id[:12] }}</code>:
-  {{ built.inline|length }} line comments, {{ built.summary_only|length }} in the summary. This is the exact payload that will be sent.</p>
-<pre>{{ payload_json }}</pre>
+<div class="banner info">
+  One review on commit <span class="mono">{{ built.payload.commit_id[:12] }}</span>, <code>event: COMMENT</code>:
+  {{ built.inline|length }} line comment{{ '' if built.inline|length == 1 else 's' }}, {{ built.summary_only|length }} in the summary.
+  Never approve or request changes.
+</div>
+
+<div class="section-title"><h2>Line comments</h2><span class="count">{{ comments|length }}</span></div>
+{% for c in comments %}
+<div class="card preview-comment">
+  <div class="hd"><span>{{ c.path }}:{{ c.lines }}</span><span>{{ c.side }}</span></div>
+  <div class="bd">{{ c.body|md }}</div>
+</div>
+{% endfor %}
+{% if not comments %}<p class="muted">No line comments; everything goes in the review summary.</p>{% endif %}
+
+<div class="section-title"><h2>Review summary</h2></div>
+<div class="card card-pad"><div style="white-space:pre-wrap">{{ built.payload.body|md }}</div></div>
+
+<details class="card" style="margin-top:1rem">
+  <summary>The raw payload (exactly what is sent)</summary>
+  <div class="inner"><pre class="code" style="padding:1rem;white-space:pre-wrap">{{ payload_json }}</pre></div>
+</details>
+
 {% if can_post %}
-<form method="post" action="/runs/{{ run_id }}/publish">
+<form method="post" action="/runs/{{ run_id }}/publish" class="card card-pad" style="margin-top:1.25rem">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  {% if stale %}<label><input type="checkbox" name="allow_stale" value="1" style="width:auto"> Publish against the analyzed commit anyway</label>{% endif %}
-  <p><button>Post this review to GitHub</button></p>
+  {% if stale %}<label class="check"><input type="checkbox" name="allow_stale" value="1"> Post against the analyzed commit anyway</label>{% endif %}
+  <button class="btn btn-primary">Post this review to GitHub</button>
+  <span class="muted small" style="margin-left:.6rem">Posted as the owner of the configured GitHub token.</span>
 </form>
 {% else %}
-<p class="muted">{{ why_not }}</p>
+<div class="banner warn" style="margin-top:1.25rem">{{ why_not }}</div>
 {% endif %}
 {% endif %}
 {% endblock %}

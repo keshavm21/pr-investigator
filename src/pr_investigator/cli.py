@@ -5,6 +5,7 @@ import json
 import platform
 import shutil
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -19,6 +20,7 @@ from pr_investigator.config import Settings
 from pr_investigator.domain import DataClass, ReviewTarget
 from pr_investigator.errors import PRIError
 from pr_investigator.evaluation.cases import load_cases
+from pr_investigator.evaluation.report import render_table
 from pr_investigator.evaluation.runner import render_summary, run_eval, validate_case, write_results
 from pr_investigator.github import GitHubClient, parse_pr_reference
 from pr_investigator.llm.client import LLMClient, ensure_data_allowed
@@ -185,6 +187,76 @@ def serve(
         "[dim]Listens on localhost only. Publishing needs GITHUB_TOKEN and your confirmation.[/]"
     )
     uvicorn.run(web, host="127.0.0.1", port=port, log_level="warning")
+
+
+@app.command()
+def service(
+    host: Annotated[
+        str, typer.Option(help="Interface to listen on (0.0.0.0 inside a container).")
+    ] = "127.0.0.1",
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8000,
+) -> None:
+    """Run the hosted web app: GitHub sign-in, review UI and the webhook endpoint."""
+    import uvicorn
+
+    from pr_investigator.service.config import ServiceSettings
+    from pr_investigator.service.runtime import build_runtime
+    from pr_investigator.web.app import create_app
+
+    try:
+        settings = _settings()
+        runtime = build_runtime(ServiceSettings(), settings)
+    except PRIError as exc:
+        raise _fail(exc) from exc
+    uvicorn.run(create_app(settings, runtime=runtime), host=host, port=port, log_level="warning")
+
+
+@app.command()
+def worker(
+    role: Annotated[
+        str, typer.Option(help="fetch (control plane) or analyze (no GitHub credentials).")
+    ],
+    once: Annotated[bool, typer.Option(help="Handle the queue once and exit.")] = False,
+    interval: Annotated[float, typer.Option(min=0.5, help="Seconds to wait when idle.")] = 5.0,
+) -> None:
+    """Run a queue worker. `fetch` holds the GitHub App key; `analyze` holds only the LLM key."""
+    import os
+
+    from pr_investigator.service import pipeline
+    from pr_investigator.service.app_auth import AppAuth
+    from pr_investigator.service.config import ServiceSettings
+    from pr_investigator.service.store import ServiceStore
+
+    if role not in ("fetch", "analyze"):
+        raise _fail(PRIError("--role must be fetch or analyze"))
+    try:
+        settings = _settings()
+        svc = ServiceSettings()
+        store = ServiceStore(settings.service_db)
+        step: Callable[[], bool]
+        if role == "analyze":
+            pipeline.assert_no_github_credentials(settings, os.environ)
+
+            def step() -> bool:
+                return pipeline.analyze_once(store, settings, svc)
+
+        else:
+            svc.require_control_plane()
+            auth = AppAuth(svc.app_id or "", svc.private_key_pem())
+
+            def step() -> bool:
+                return pipeline.fetch_once(store, auth, settings, svc)
+
+        if once:
+            while step():
+                pass
+            return
+        err.print(f"[dim]{role} worker running; Ctrl-C to stop[/]")
+        pipeline.run_loop(step, interval=interval)
+    except PRIError as exc:
+        raise _fail(exc) from exc
+    except KeyboardInterrupt:
+        pass
 
 
 @app.command()
@@ -437,6 +509,27 @@ def eval_run(
     write_results(out_dir, info, scores, summary)
     console.print(Markdown(render_summary(info, scores, summary)))
     console.print(f"[dim]{budget.used} real provider requests. Results in {out_dir}[/]")
+
+
+@eval_app.command("report")
+def eval_report(
+    run: Annotated[
+        list[str],
+        typer.Argument(help="One or more LABEL=RESULTS_DIR pairs, e.g. A2=evals/results/x."),
+    ],
+    output: Annotated[Path | None, typer.Option(help="Also write the table to this file.")] = None,
+) -> None:
+    """Print the ablation table (with bootstrap intervals) for result directories."""
+    columns: list[tuple[str, Path]] = []
+    for item in run:
+        label, sep, path = item.partition("=")
+        if not sep or not (Path(path) / "results.jsonl").is_file():
+            raise _fail(PRIError(f"expected LABEL=DIR with a results.jsonl in DIR, got {item!r}"))
+        columns.append((label, Path(path)))
+    table = render_table(columns)
+    console.print(Markdown(table))
+    if output is not None:
+        output.write_text(table + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":  # pragma: no cover

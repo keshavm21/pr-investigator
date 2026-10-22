@@ -1,0 +1,9 @@
+# TLS certificates are obtained and renewed automatically for $PRI_DOMAIN.
+{$PRI_DOMAIN} {
+	encode zstd gzip
+	# Webhook bodies are small; refuse anything big before it reaches the app.
+	request_body {
+		max_size 6MB
+	}
+	reverse_proxy web:8000
+}
