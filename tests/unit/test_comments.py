@@ -309,3 +309,16 @@ def test_a_resolved_anchor_is_always_commentable_and_inside_the_requested_range(
     file = DIFF.file("app/a.py")
     assert file is not None and file.is_commentable(side, resolved.start_line, resolved.end_line)
     assert start <= resolved.start_line <= resolved.end_line <= start + length
+
+
+def test_a_permalink_to_the_analyzed_commit_is_not_mistaken_for_a_secret() -> None:
+    sha = "d8fa26105a26f3d26e63c658b7dfb670141e7283"
+    link = f"[`app.py:4-6`](https://github.com/keshavm21/pri-test-repo/blob/{sha}/app.py#L4-L6)"
+    text, found = scan_secrets(f"- {link}: note")
+    assert found == 0 and text == f"- {link}: note"
+
+
+def test_a_high_entropy_segment_inside_a_url_is_still_redacted() -> None:
+    secret = "Zk3Qx9Lm2Vb7Nc4Rt8Yp1Ws6Dh5Jf0Gq" + "A1b2C3d4"
+    text, found = scan_secrets(f"see https://github.com/o/r/blob/{secret}/x.py")
+    assert found == 1 and secret not in text

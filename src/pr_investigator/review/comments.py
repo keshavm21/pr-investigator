@@ -51,6 +51,10 @@ def shannon_entropy(text: str) -> float:
     return -sum(n / len(text) * math.log2(n / len(text)) for n in counts.values())
 
 
+def _secretish(part: str) -> bool:
+    return len(part) >= 32 and shannon_entropy(part) >= ENTROPY_THRESHOLD
+
+
 def scan_secrets(text: str) -> tuple[str, int]:
     """The text with secrets redacted, and how many were found."""
     found = 0
@@ -63,8 +67,21 @@ def scan_secrets(text: str) -> tuple[str, int]:
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(hide, text)
 
+    url_spans = [m.span() for m in _URL.finditer(text)]
+
+    def in_url(match: re.Match[str]) -> bool:
+        return any(start <= match.start() and match.end() <= end for start, end in url_spans)
+
     def maybe(match: re.Match[str]) -> str:
         token = match.group(0)
+        if in_url(match) and "/" in token:
+            # A permalink's path (owner/repo/blob/<sha>/file) blends into one long token whose
+            # entropy says nothing; judge each path segment on its own.
+            parts = token.split("/")
+            for index, part in enumerate(parts):
+                if _secretish(part):
+                    parts[index] = hide(match)
+            return "/".join(parts)
         return hide(match) if shannon_entropy(token) >= ENTROPY_THRESHOLD else token
 
     return _TOKEN.sub(maybe, text), found
