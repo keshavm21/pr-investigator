@@ -1,5 +1,7 @@
 # PR Investigator
 
+[![CI](https://github.com/keshavm21/pr-investigator/actions/workflows/ci.yml/badge.svg)](https://github.com/keshavm21/pr-investigator/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)
+
 An evidence-driven AI reviewer for GitHub pull requests. Instead of sending a diff to an LLM and posting whatever comes back, it forms hypotheses about a PR, investigates each one with read-only tools over the repository, checks every claim mechanically against the code, and lets a human decide what gets posted as a GitHub review.
 
 - **Evidence before claims.** A finding is reportable only if each piece of evidence points at a line range that a tool actually returned during that investigation. The check is deterministic and runs against the analyzed commit. The code snippets you see are re-read by the system, never copied from model output.
@@ -14,18 +16,19 @@ An evidence-driven AI reviewer for GitHub pull requests. Instead of sending a di
 
 1. [How it works](#how-it-works)
 2. [Results](#results)
-3. [Quick start](#quick-start)
-4. [Using it](#using-it)
-5. [Configuration](#configuration)
-6. [The review UI and publishing](#the-review-ui-and-publishing)
-7. [The evaluation suite](#the-evaluation-suite)
-8. [The hosted service](#the-hosted-service)
-9. [Repository layout](#repository-layout)
-10. [Development](#development)
-11. [Security model](#security-model)
-12. [Limitations](#limitations)
-13. [Troubleshooting](#troubleshooting)
-14. [Documentation](#documentation)
+3. [Screenshot](#screenshot)
+4. [Quick start](#quick-start)
+5. [Using it](#using-it)
+6. [Configuration](#configuration)
+7. [The review UI and publishing](#the-review-ui-and-publishing)
+8. [The evaluation suite](#the-evaluation-suite)
+9. [The hosted service](#the-hosted-service)
+10. [Repository layout](#repository-layout)
+11. [Development](#development)
+12. [Security model](#security-model)
+13. [Limitations](#limitations)
+14. [Troubleshooting](#troubleshooting)
+15. [Documentation](#documentation)
 
 ## How it works
 
@@ -83,6 +86,12 @@ What this says:
 - **The skeptic verifier (A3) and the structural tools did not earn their place** on this model, so they are opt-in.
 - **A2 flags decoys more often** (4 of 9 decoy runs) than B0 and B1. The severity rule removes most low-severity ones before posting, but the raw agent is more speculative.
 - **Security:** 0 canary leaks and 0 surviving injections through the output layer, against a scripted model that obeys every attack ([evals/results/security.md](evals/results/security.md)). How often a real model resists an injection is not measured.
+
+## Screenshot
+
+The review UI after a real run on a test pull request: one high-severity finding inside the noise budget, approved by a human and posted to GitHub as a single `COMMENT` review.
+
+![The review UI: a run page with a published banner, summary tiles and a high-severity SQL injection finding](docs/images/screenshot.png)
 
 ## Quick start
 
